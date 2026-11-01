@@ -44,22 +44,9 @@ names such as MAP_RESPONSE; plain numbers are always accepted.
 import copy
 import struct
 
-PCP_OPCODES = {"ANNOUNCE": 0, "MAP": 1, "PEER": 2, "AUTHENTICATION": 3}
-NATPMP_OPCODES = {"PUBLIC_ADDRESS": 0, "MAP_UDP": 1, "MAP_TCP": 2}
-PROTOCOLS = {"UDP": 17, "TCP": 6}
-OPTIONS = {"THIRD_PARTY": 1, "PREFER_FAILURE": 2, "FILTER": 3, "NONCE": 4, "PORT_SET": 130}
-RESULTS = {
-    "pcp": {"SUCCESS": 0, "UNSUPP_VERSION": 1, "NOT_AUTHORIZED": 2, "MALFORMED_REQUEST": 3,
-            "UNSUPP_OPCODE": 4, "UNSUPP_OPTION": 5, "MALFORMED_OPTION": 6, "NETWORK_FAILURE": 7,
-            "NO_RESOURCES": 8, "UNSUPP_PROTOCOL": 9, "USER_EX_QUOTA": 10,
-            "CANNOT_PROVIDE_EXTERNAL": 11, "ADDRESS_MISMATCH": 12, "EXCESSIVE_REMOTE_PEERS": 13},
-    "natpmp": {"SUCCESS": 0, "UNSUPP_VERSION": 1, "NOT_AUTHORIZED": 2, "NETWORK_FAILURE": 3,
-               "OUT_OF_RESOURCES": 4, "UNSUPP_OPCODE": 5},
-}
-RESPONSE_OPCODES = {
-    "pcp": {name + "_RESPONSE": 128 + code for name, code in PCP_OPCODES.items()},
-    "natpmp": {name + "_RESPONSE": 128 + code for name, code in NATPMP_OPCODES.items()},
-}
+from pcp_wire import (NATPMP_OPCODES, OPTIONS, PCP_OPCODES, PROTOCOLS, RESPONSE_OPCODES,  # noqa: E402
+                      RESULTS)
+
 # symbolic field -> low-level field
 MAP_RENAMES = {"nonce": "nonce_hex", "peer": "peer_address"}
 MAP_DEFAULTS = {"version": 2, "client": "source", "external_address": "::", "external_port": 0}

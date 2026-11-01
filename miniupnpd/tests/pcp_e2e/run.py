@@ -20,38 +20,32 @@ for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pard
         sys.path.insert(0, _common)
 
 import pcp_defs  # noqa: E402
+import pcp_wire  # noqa: E402
 
 try:
     import yaml
 except ImportError as exc:
     raise SystemExit("PyYAML is required") from exc
 
-RESULTS = {0: "SUCCESS", 1: "UNSUPP_VERSION", 2: "NOT_AUTHORIZED", 3: "MALFORMED_REQUEST",
-           4: "UNSUPP_OPCODE", 5: "UNSUPP_OPTION", 6: "MALFORMED_OPTION", 7: "NETWORK_FAILURE",
-           8: "NO_RESOURCES", 9: "UNSUPP_PROTOCOL", 10: "USER_EX_QUOTA",
-           11: "CANNOT_PROVIDE_EXTERNAL", 12: "ADDRESS_MISMATCH", 13: "EXCESSIVE_REMOTE_PEERS"}
+RESULTS = pcp_wire.names_by_code(pcp_wire.RESULTS["pcp"])
 TIMEOUT = 1.0
 
 
-def v6_address(value):
-    address = ipaddress.ip_address(value)
-    if address.version == 4:
-        return socket.inet_pton(socket.AF_INET6, f"::ffff:{address}")
-    return socket.inet_pton(socket.AF_INET6, str(address))
+v6_address = pcp_wire.ipv6_bytes
 
 
 def build_map_packet(client, spec, peer_addresses, nonce=None):
     nonce = nonce or os.urandom(12)
-    body = nonce + bytes(({"tcp": 6, "udp": 17}[spec["protocol"]], 0, 0, 0))
-    body += struct.pack("!HH", spec["internal_port"], spec["suggested_external_port"])
     suggested_address = spec.get("suggested_external_address")
-    body += v6_address(suggested_address) if suggested_address else b"\0" * 16
-    opcode = {"MAP": 1, "PEER": 2}[spec.get("opcode", "MAP")]
-    packet = bytes((2, opcode, 0, 0)) + struct.pack("!I", spec["lifetime"])
-    packet += v6_address(client) + body
-    if opcode == 2:
+    body = pcp_wire.pcp_map_body(
+        pcp_wire.PROTOCOLS[spec["protocol"].upper()], spec["internal_port"],
+        spec["suggested_external_port"],
+        v6_address(suggested_address) if suggested_address else b"\0" * 16, nonce)
+    opcode = pcp_wire.PCP_OPCODES[spec.get("opcode", "MAP")]
+    packet = pcp_wire.pcp_header(2, opcode, spec["lifetime"], client) + body
+    if opcode == pcp_wire.PCP_OPCODES["PEER"]:
         peer = peer_addresses.get(spec["remote_peer"], spec["remote_peer"])
-        packet += struct.pack("!H", spec["remote_peer_port"]) + b"\0\0" + v6_address(peer)
+        packet += pcp_wire.pcp_peer_tail(spec["remote_peer_port"], peer)
     filters = spec.get("filters")
     if filters is None:
         filters = [spec["filter"]] if spec.get("filter") else []
@@ -64,12 +58,10 @@ def build_map_packet(client, spec, peer_addresses, nonce=None):
         remote_port = filt.get("remote_port", 0)
         if remote_port == "any":
             remote_port = 0
-        option = bytes((3, 0, 0, 20)) + bytes((0, prefix))
-        option += struct.pack("!H", remote_port) + v6_address(peer)
-        packet += option * filt.get("repeat", 1)
+        packet += pcp_wire.pcp_filter_option(prefix, remote_port, peer) * filt.get("repeat", 1)
     if spec.get("prefer_failure"):
-        packet += bytes((2, 0, 0, 0))
-    packet += bytes((128, 0, 0, 0)) * spec.get("unknown_optional_options", 0)
+        packet += pcp_wire.pcp_option(pcp_wire.OPTIONS["PREFER_FAILURE"])
+    packet += pcp_wire.pcp_option(pcp_wire.OPTION_UNKNOWN_OPTIONAL) * spec.get("unknown_optional_options", 0)
     if len(packet) > 1100:
         raise ValueError(f"PCP request exceeds 1100-octet limit ({len(packet)} octets)")
     return packet, nonce, body
@@ -108,8 +100,7 @@ def map_request(sock, router, client, spec, peer_addresses, nonce=None):
     return result, struct.unpack("!H", response[42:44])[0], nonce
 
 
-NATPMP_RESULTS = {0: "SUCCESS", 1: "UNSUPP_VERSION", 2: "NOT_AUTHORIZED",
-                  3: "NETWORK_FAILURE", 4: "OUT_OF_RESOURCES", 5: "UNSUPP_OPCODE"}
+NATPMP_RESULTS = pcp_wire.names_by_code(pcp_wire.RESULTS["natpmp"])
 
 
 def natpmp_request(sock, router, spec):
@@ -119,8 +110,8 @@ def natpmp_request(sock, router, spec):
         expected_opcode = 128
     else:
         protocol_opcode = {"udp": 1, "tcp": 2}[spec["protocol"]]
-        packet = struct.pack("!BBHHHI", 0, protocol_opcode, 0,
-                             spec["private_port"], spec["public_port"], spec["lifetime"])
+        packet = pcp_wire.natpmp_packet(protocol_opcode, spec["private_port"],
+                                        spec["public_port"], spec["lifetime"])
         expected_opcode = 128 + protocol_opcode
     sock.sendto(packet, (router, 5351))
     response, _ = sock.recvfrom(64)

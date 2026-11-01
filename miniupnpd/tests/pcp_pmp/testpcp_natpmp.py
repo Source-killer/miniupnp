@@ -23,13 +23,16 @@ import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "common"),
                 "/pcp-pmp-common"):
     if os.path.isdir(_common):
         sys.path.insert(0, _common)
 
+import pcap  # noqa: E402
 import pcp_defs  # noqa: E402
+import pcp_wire  # noqa: E402
 
 TIMEOUT = 2.0
 
@@ -283,12 +286,7 @@ def expect_silence(sock, address, request):
 
 
 def pcp_request_for_client(version, opcode, lifetime, client_address):
-    common = struct.pack("!BBHI", version, opcode, 0, lifetime)
-    if ":" in client_address:
-        client_ip = socket.inet_pton(socket.AF_INET6, client_address)
-    else:
-        client_ip = (b"\x00" * 10) + b"\xff\xff" + socket.inet_aton(client_address)
-    return common + client_ip
+    return pcp_wire.pcp_header(version, opcode, lifetime, client_address)
 
 
 def client_address(sock, address):
@@ -303,21 +301,12 @@ def client_address(sock, address):
 def pcp_map_request(version, lifetime, client_ip, internal_port, external_port,
                     protocol, nonce=b"\x42" * 12, external_ip=None, options=(), opcode=1):
     request = pcp_request_for_client(version, opcode, lifetime, client_ip)
-    if version == 1:
-        payload = (bytes((protocol, 0, 0, 0)) +
-                   struct.pack("!HH", internal_port, external_port) +
-                   (external_ip or (b"\x00" * 16)))
-    else:
-        payload = (nonce + bytes((protocol, 0, 0, 0)) +
-                   struct.pack("!HH", internal_port, external_port) +
-                   (external_ip or (b"\x00" * 16)))
+    payload = pcp_wire.pcp_map_body(protocol, internal_port, external_port,
+                                    external_ip or (b"\x00" * 16), nonce if version != 1 else None)
     return request + payload + b"".join(options)
 
 
-def encode_ip_address(value):
-    if ":" in value:
-        return socket.inet_pton(socket.AF_INET6, value)
-    return b"\x00" * 10 + b"\xff\xff" + socket.inet_aton(value)
+encode_ip_address = pcp_wire.ipv6_bytes
 
 
 def resolve_value(value, variables):
@@ -354,11 +343,10 @@ def build_lifecycle_request(sock, address, case, spec, step, variables):
                                    spec["protocol_number"], variables["nonce"],
                                    opcode=spec["opcode"])
         common = pcp_request_for_client(spec["version"], spec["opcode"], lifetime, client_ip)
-        payload = (variables["nonce"] + bytes((spec["protocol_number"], 0, 0, 0)) +
-                   struct.pack("!HH", internal_port, external_port) +
-                   (b"\x00" * 16) +
-                   struct.pack("!HH", spec["peer_port"], spec.get("peer_external_port", 0)) +
-                   encode_ip_address(spec["peer_address"]))
+        payload = (pcp_wire.pcp_map_body(spec["protocol_number"], internal_port, external_port,
+                                         nonce=variables["nonce"]) +
+                   pcp_wire.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
+                                          spec.get("peer_external_port", 0)))
         return common + payload
 
     public_port = resolve_value(step["public_port"], variables)
@@ -453,18 +441,14 @@ def run_lifecycle(sock, address, case):
                     pass
 
 
-def pcp_option(code, data=b""):
-    option = struct.pack("!BBH", code, 0, len(data)) + data
-    return option + (b"\x00" * (-len(data) % 4))
+pcp_option = pcp_wire.pcp_option
 
 
 def client_ip_bytes(sock, address, selector):
     if selector == "unspecified":
         return b"\x00" * 16
     value = client_address(sock, address) if selector == "source" else selector
-    if ":" in value:
-        return socket.inet_pton(socket.AF_INET6, value)
-    return b"\x00" * 10 + b"\xff\xff" + socket.inet_aton(value)
+    return pcp_wire.ipv6_bytes(value)
 
 
 def pcp_options(options):
@@ -493,9 +477,9 @@ def build_request_payload(sock, address, spec):
     if kind == "raw":
         return bytes.fromhex(spec["hex"])
     if kind == "pcp_header":
-        request = struct.pack("!BBHI", spec["version"], spec["opcode"],
-                              spec.get("reserved", 0), spec.get("lifetime", 0))
-        request += client_ip_bytes(sock, address, spec.get("client", "unspecified"))
+        request = pcp_wire.pcp_header(spec["version"], spec["opcode"], spec.get("lifetime", 0),
+                                      client_ip_bytes(sock, address, spec.get("client", "unspecified")),
+                                      spec.get("reserved", 0))
         if spec.get("response_bit"):
             request = request[:1] + bytes((request[1] | 0x80,)) + request[2:]
         request += bytes.fromhex(spec.get("append_hex", ""))
@@ -507,23 +491,18 @@ def build_request_payload(sock, address, spec):
     if kind in {"pcp_map", "pcp_peer"}:
         version = spec["version"]
         nonce = bytes.fromhex(spec.get("nonce_hex", "42" * 12))
-        common = struct.pack("!BBHI", version, spec.get("opcode", 1),
-                             spec.get("reserved", 0), spec.get("lifetime", 0))
-        common += client_ip_bytes(sock, address, spec.get("client", "unspecified"))
-        protocol_number = spec["protocol_number"]
-        mapping = (nonce if version == 2 else b"")
-        mapping += bytes((protocol_number, 0, 0, 0))
-        mapping += struct.pack("!HH", spec.get("internal_port", 40000), spec.get("external_port", 0))
-        external_address = spec.get("external_address", "::")
-        if ":" in external_address:
-            mapping += socket.inet_pton(socket.AF_INET6, external_address)
-        else:
-            mapping += client_ip_bytes(sock, address, external_address)
+        common = pcp_wire.pcp_header(version, spec.get("opcode", 1), spec.get("lifetime", 0),
+                                     client_ip_bytes(sock, address, spec.get("client", "unspecified")),
+                                     spec.get("reserved", 0))
+        mapping = pcp_wire.pcp_map_body(
+            spec["protocol_number"], spec.get("internal_port", 40000), spec.get("external_port", 0),
+            client_ip_bytes(sock, address, spec.get("external_address", "::")),
+            nonce if version == 2 else None)
         if kind == "pcp_peer":
             if version != 2:
                 raise ValueError("pcp_peer request builder requires version 2")
-            mapping += struct.pack("!HH", spec["peer_port"], spec.get("peer_reserved", 0))
-            mapping += encode_ip_address(spec["peer_address"])
+            mapping += pcp_wire.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
+                                              spec.get("peer_reserved", 0))
         request = common + mapping + pcp_options(spec.get("options", []))
         request += bytes.fromhex(spec.get("append_hex", ""))
         if "truncate_to" in spec:
@@ -752,62 +731,36 @@ def run_protocol_sequence(sock, address, case, peer_url=None):
                 pass
 
 
-PCAP_MAGICS = {
-    b"\xd4\xc3\xb2\xa1": "<", b"\xa1\xb2\xc3\xd4": ">",   # microsecond
-    b"\x4d\x3c\xb2\xa1": "<", b"\xa1\xb2\x3c\x4d": ">",   # nanosecond
-}
-
-
 def read_pcap_packets(path):
-    """Return (timestamp seconds, Ethernet frame) pairs of a classic pcap file written by tcpdump -w."""
-    with open(path, "rb") as pcap:
-        data = pcap.read()
-    if len(data) < 24 or data[:4] not in PCAP_MAGICS:
-        raise AssertionError(f"{path}: not a classic pcap file")
-    endian = PCAP_MAGICS[data[:4]]
-    linktype = struct.unpack(endian + "I", data[20:24])[0]
-    if linktype != 1:
-        raise AssertionError(f"{path}: unsupported link type {linktype} (need Ethernet)")
-    nanoseconds = data[:4] in (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d")
-    packets, offset = [], 24
-    while offset + 16 <= len(data):
-        seconds, fraction, captured = struct.unpack(endian + "III", data[offset:offset + 12])
-        timestamp = seconds + fraction / (1e9 if nanoseconds else 1e6)
-        packets.append((timestamp, data[offset + 16:offset + 16 + captured]))
-        offset += 16 + captured
-    return packets
+    """Return (timestamp seconds, Ethernet frame) pairs of a pcap file written by tcpdump -w."""
+    records = []
+    try:
+        for _number, timestamp, linktype, frame, _truncated in pcap.read_pcap(Path(path)):
+            if linktype != 1:
+                raise AssertionError(f"{path}: unsupported link type {linktype} (need Ethernet)")
+            records.append((timestamp, frame))
+    except ValueError as error:
+        if "truncated pcap record" not in str(error):  # a capture cut off mid-record keeps what it has
+            raise AssertionError(str(error)) from error
+    return records
 
 
 def read_pcap_frames(path):
-    """Return the Ethernet frames of a classic pcap file written by tcpdump -w."""
+    """Return the Ethernet frames of a pcap file written by tcpdump -w."""
     return [frame for _timestamp, frame in read_pcap_packets(path)]
 
 
 def parse_udp_frame(frame):
     """Return (source ip, destination ip, source port, destination port, payload) or None."""
-    if len(frame) < 14:
+    try:
+        decoded = pcap.udp_payload(frame, 1)
+    except ValueError:
         return None
-    ethertype, offset = struct.unpack("!H", frame[12:14])[0], 14
-    while ethertype in (0x8100, 0x88a8) and len(frame) >= offset + 4:  # VLAN tags
-        ethertype = struct.unpack("!H", frame[offset + 2:offset + 4])[0]
-        offset += 4
-    if ethertype == 0x0800 and len(frame) >= offset + 20:
-        header_length = (frame[offset] & 0x0f) * 4
-        if frame[offset + 9] != 17 or len(frame) < offset + header_length + 8:
-            return None
-        source = ipaddress.ip_address(frame[offset + 12:offset + 16])
-        destination = ipaddress.ip_address(frame[offset + 16:offset + 20])
-        udp = offset + header_length
-    elif ethertype == 0x86dd and len(frame) >= offset + 48:
-        if frame[offset + 6] != 17:  # extension headers are not expected here
-            return None
-        source = ipaddress.ip_address(frame[offset + 8:offset + 24])
-        destination = ipaddress.ip_address(frame[offset + 24:offset + 40])
-        udp = offset + 40
-    else:
+    if decoded is None:
         return None
-    source_port, destination_port = struct.unpack("!HH", frame[udp:udp + 4])
-    return source, destination, source_port, destination_port, frame[udp + 8:]
+    source, source_port, destination, destination_port, payload = decoded[:5]
+    return (ipaddress.ip_address(source), ipaddress.ip_address(destination),
+            source_port, destination_port, payload)
 
 
 def matching_udp_packets(path, expect, family, check_payload):
@@ -972,7 +925,6 @@ def run_case(sock, address, case, mutating=False, peer_url=None, args=None):
 def run_self_tests():
     """Check runner mechanics without loading cases or contacting a daemon."""
     import unittest
-    from pathlib import Path
     from unittest.mock import patch
 
     runner = sys.modules[__name__]
@@ -1116,7 +1068,7 @@ def run_self_tests():
             payload = bytes([2, 128, 0, 0]) + bytes(20)
             udp = struct.pack("!HHHH", 5351, 5350, 8 + len(payload), 0) + payload
             ethernet = bytes(12)
-            ipv4 = (ethernet + b"\x08\x00" + bytes([0x45, 0, 0, 0, 0, 0, 0, 0, 1, 17, 0, 0])
+            ipv4 = (ethernet + b"\x08\x00" + bytes([0x45, 0, 0, 20 + len(udp), 0, 0, 0, 0, 1, 17, 0, 0])
                     + bytes([192, 168, 1, 1]) + bytes([224, 0, 0, 1]) + udp)
             ipv6 = (ethernet + b"\x86\xdd" + bytes([0x60, 0, 0, 0, 0, len(udp), 17, 1])
                     + ipaddress.ip_address("fd42::1").packed + ipaddress.ip_address("ff02::1").packed + udp)
