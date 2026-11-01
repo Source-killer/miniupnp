@@ -1,7 +1,7 @@
 """Human-readable PCP / NAT-PMP packet definitions for pcp-natpmp-cases.yaml.
 
 Cases are written with symbolic names; `expand_corpus` turns them into the
-low-level request/expect dictionaries that testpcp_natpmp.py builds packets from.
+low-level request/expect dictionaries that run_pcp_natpmp_cases.py builds packets from.
 
 Request forms (anything containing `kind:` is passed through unchanged):
 
@@ -44,7 +44,7 @@ names such as MAP_RESPONSE; plain numbers are always accepted.
 import copy
 import struct
 
-from pcp_wire import (NATPMP_OPCODES, OPTIONS, PCP_OPCODES, PROTOCOLS, RESPONSE_OPCODES,  # noqa: E402
+from pcp_packet_encoding import (NATPMP_OPCODES, OPTIONS, PCP_OPCODES, PROTOCOLS, RESPONSE_OPCODES,  # noqa: E402
                       RESULTS)
 
 # symbolic field -> low-level field
@@ -324,7 +324,7 @@ def expand_corpus(corpus):
 
 
 # ---------------------------------------------------------------------------
-# pcp-e2e-cases.yaml: requests are described to the e2e runner (run.py), which
+# pcp-e2e-cases.yaml: requests are described to the e2e runner (run_pcp_e2e_cases.py), which
 # builds the packet bytes itself.  `expand_e2e_corpus` turns the named form
 #
 #   request:
@@ -334,13 +334,13 @@ def expand_corpus(corpus):
 #     internal_port: 41006
 #     suggested_external_port: 41006
 #     options:                         FILTERs first, then PREFER_FAILURE, then
-#       - FILTER: allowed-peer         UNKNOWN_OPTIONAL (the order run.py sends them)
+#       - FILTER: allowed-peer         UNKNOWN_OPTIONAL (the order run_pcp_e2e_cases.py sends them)
 #       - {FILTER: {remote_peer: denied-peer, remote_port: 42000, prefix_length: 24}}
 #       - PREFER_FAILURE
 #       - {UNKNOWN_OPTIONAL: 1}
 #   request: {natpmp: UDP | TCP | PUBLIC_ADDRESS, private_port: .., public_port: .., lifetime: ..}
 #
-# into the keys run.py reads (opcode, filter/filters, prefer_failure,
+# into the keys run_pcp_e2e_cases.py reads (opcode, filter/filters, prefer_failure,
 # unknown_optional_options, protocol_family).  A FILTER given only a peer name
 # matches that exact address (prefix /32 for IPv4, /128 for IPv6) on any port;
 # `prefix_length: exact` is that same default.  `defs.packets` + `use:` work as above.

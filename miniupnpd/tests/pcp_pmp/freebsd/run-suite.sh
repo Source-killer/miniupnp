@@ -37,7 +37,7 @@ jexec "$JAIL" ifconfig epair0b inet 192.168.1.2/24
 jexec "$JAIL" ifconfig epair0b inet6 fd42:1::2/64
 sleep 3 # let IPv6 DAD finish
 
-runner() { jexec "$JAIL" python3 "$HERE/testpcp_natpmp.py" --port 5351 "$@"; }
+runner() { jexec "$JAIL" python3 "$HERE/run_pcp_natpmp_cases.py" --port 5351 "$@"; }
 
 ready=0
 attempt=0

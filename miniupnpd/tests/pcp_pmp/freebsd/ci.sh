@@ -23,7 +23,7 @@ sh "$HERE/freebsd/run-suite.sh" "$RESULTS" || status=1
 # ... then the cases that cold-start the daemon themselves.
 export PCP_TEST_DAEMON_TREE=$TREE FREEBSD_ARTIFACTS=$RESULTS/captures
 for family in ipv4 ipv6; do
-	python3 "$HERE/testpcp_natpmp.py" --fixture "$HERE/fixtures/freebsd.sh" --fixture-only \
+	python3 "$HERE/run_pcp_natpmp_cases.py" --fixture "$HERE/fixtures/freebsd.sh" --fixture-only \
 		--protocol pcp --family "$family" --platform freebsd --allow-empty-selection \
 		--status-file "$RESULTS/status.md" || status=1
 done

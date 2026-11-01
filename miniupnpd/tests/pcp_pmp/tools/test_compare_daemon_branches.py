@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import compare_branches as compare
-from test_compare_pcaps import pcap_file, pcp, udp_packet
+import compare_daemon_branches as compare
+from test_compare_pcap_wire_fields import pcap_file, pcp, udp_packet
 
 
 class BranchComparisonTests(unittest.TestCase):

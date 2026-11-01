@@ -116,7 +116,7 @@ attempt=0
 while [ "$attempt" -lt 20 ]; do
 	if "$DOCKER_BIN" run --rm --network "$NETWORK" \
 		--entrypoint python3 "$IMAGE" \
-		/src/miniupnpd/tests/pcp_pmp/testpcp_natpmp.py \
+		/src/miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py \
 		--host pcp-router --port 5351 \
 		--protocol natpmp --case public-address >/dev/null 2>&1; then
 		ready=1
@@ -161,7 +161,7 @@ run_tests() {
 			--env "PCP_TEST_ROUTER6=$ROUTER6" --entrypoint sh "$IMAGE" \
 			/pcp-pmp-tests/docker/client-entrypoint.sh "$@"
 	else
-		set -- --entrypoint python3 "$IMAGE" /pcp-pmp-tests/testpcp_natpmp.py "$@"
+		set -- --entrypoint python3 "$IMAGE" /pcp-pmp-tests/run_pcp_natpmp_cases.py "$@"
 	fi
 	set -- --volume "$SCRIPT_DIR:/pcp-pmp-tests:rw" \
 		--volume "$SCRIPT_DIR/../common:/pcp-pmp-common:ro" \
@@ -221,7 +221,7 @@ elif [ "${PCP_TEST_RESTART_CASES:-1}" = 1 ]; then
 	done
 	for restart_family in ipv4 ipv6; do
 		# shellcheck disable=SC2086
-		PCP_TEST_IMAGE=$IMAGE DOCKER=$DOCKER_BIN python3 "$SCRIPT_DIR/testpcp_natpmp.py" \
+		PCP_TEST_IMAGE=$IMAGE DOCKER=$DOCKER_BIN python3 "$SCRIPT_DIR/run_pcp_natpmp_cases.py" \
 			--fixture "$SCRIPT_DIR/fixtures/docker.sh" --fixture-only --protocol pcp \
 			--family "$restart_family" --platform linux --allow-empty-selection \
 			--status-file "$RESULTS_DIR/status.md" \

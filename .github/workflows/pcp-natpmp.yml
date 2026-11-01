@@ -64,9 +64,9 @@ jobs:
       - name: Check comparison tools
         run: |
           python3 \
-            candidate/miniupnpd/tests/pcp_pmp/tools/test_compare_branches.py
+            candidate/miniupnpd/tests/pcp_pmp/tools/test_compare_daemon_branches.py
           python3 \
-            candidate/miniupnpd/tests/pcp_pmp/testpcp_natpmp.py --self-test
+            candidate/miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py --self-test
           python3 candidate/miniupnpd/tests/common/traffic_agent.py --self-test
           sh -n candidate/miniupnpd/tests/pcp_pmp/testpcp_natpmp_docker.sh
           for script in testpcp_natpmp_freebsd.sh fixtures/docker.sh \
@@ -88,7 +88,7 @@ jobs:
           if [ "$PCP_WAN_PEER" = true ]; then
             args+=(--wan-peer)
           fi
-          python3 candidate/miniupnpd/tests/pcp_pmp/tools/compare_branches.py \
+          python3 candidate/miniupnpd/tests/pcp_pmp/tools/compare_daemon_branches.py \
             --master-source master \
             --candidate-source candidate \
             --profile "$PCP_PROFILE" \

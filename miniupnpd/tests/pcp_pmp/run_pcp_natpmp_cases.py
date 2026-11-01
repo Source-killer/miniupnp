@@ -30,9 +30,9 @@ for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pard
     if os.path.isdir(_common):
         sys.path.insert(0, _common)
 
-import pcap  # noqa: E402
-import pcp_defs  # noqa: E402
-import pcp_wire  # noqa: E402
+import pcap_reader  # noqa: E402
+import pcp_corpus_expander  # noqa: E402
+import pcp_packet_encoding  # noqa: E402
 
 TIMEOUT = 2.0
 
@@ -286,7 +286,7 @@ def expect_silence(sock, address, request):
 
 
 def pcp_request_for_client(version, opcode, lifetime, client_address):
-    return pcp_wire.pcp_header(version, opcode, lifetime, client_address)
+    return pcp_packet_encoding.pcp_header(version, opcode, lifetime, client_address)
 
 
 def client_address(sock, address):
@@ -301,12 +301,12 @@ def client_address(sock, address):
 def pcp_map_request(version, lifetime, client_ip, internal_port, external_port,
                     protocol, nonce=b"\x42" * 12, external_ip=None, options=(), opcode=1):
     request = pcp_request_for_client(version, opcode, lifetime, client_ip)
-    payload = pcp_wire.pcp_map_body(protocol, internal_port, external_port,
+    payload = pcp_packet_encoding.pcp_map_body(protocol, internal_port, external_port,
                                     external_ip or (b"\x00" * 16), nonce if version != 1 else None)
     return request + payload + b"".join(options)
 
 
-encode_ip_address = pcp_wire.ipv6_bytes
+encode_ip_address = pcp_packet_encoding.ipv6_bytes
 
 
 def resolve_value(value, variables):
@@ -343,9 +343,9 @@ def build_lifecycle_request(sock, address, case, spec, step, variables):
                                    spec["protocol_number"], variables["nonce"],
                                    opcode=spec["opcode"])
         common = pcp_request_for_client(spec["version"], spec["opcode"], lifetime, client_ip)
-        payload = (pcp_wire.pcp_map_body(spec["protocol_number"], internal_port, external_port,
+        payload = (pcp_packet_encoding.pcp_map_body(spec["protocol_number"], internal_port, external_port,
                                          nonce=variables["nonce"]) +
-                   pcp_wire.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
+                   pcp_packet_encoding.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
                                           spec.get("peer_external_port", 0)))
         return common + payload
 
@@ -441,14 +441,14 @@ def run_lifecycle(sock, address, case):
                     pass
 
 
-pcp_option = pcp_wire.pcp_option
+pcp_option = pcp_packet_encoding.pcp_option
 
 
 def client_ip_bytes(sock, address, selector):
     if selector == "unspecified":
         return b"\x00" * 16
     value = client_address(sock, address) if selector == "source" else selector
-    return pcp_wire.ipv6_bytes(value)
+    return pcp_packet_encoding.ipv6_bytes(value)
 
 
 def pcp_options(options):
@@ -477,7 +477,7 @@ def build_request_payload(sock, address, spec):
     if kind == "raw":
         return bytes.fromhex(spec["hex"])
     if kind == "pcp_header":
-        request = pcp_wire.pcp_header(spec["version"], spec["opcode"], spec.get("lifetime", 0),
+        request = pcp_packet_encoding.pcp_header(spec["version"], spec["opcode"], spec.get("lifetime", 0),
                                       client_ip_bytes(sock, address, spec.get("client", "unspecified")),
                                       spec.get("reserved", 0))
         if spec.get("response_bit"):
@@ -491,17 +491,17 @@ def build_request_payload(sock, address, spec):
     if kind in {"pcp_map", "pcp_peer"}:
         version = spec["version"]
         nonce = bytes.fromhex(spec.get("nonce_hex", "42" * 12))
-        common = pcp_wire.pcp_header(version, spec.get("opcode", 1), spec.get("lifetime", 0),
+        common = pcp_packet_encoding.pcp_header(version, spec.get("opcode", 1), spec.get("lifetime", 0),
                                      client_ip_bytes(sock, address, spec.get("client", "unspecified")),
                                      spec.get("reserved", 0))
-        mapping = pcp_wire.pcp_map_body(
+        mapping = pcp_packet_encoding.pcp_map_body(
             spec["protocol_number"], spec.get("internal_port", 40000), spec.get("external_port", 0),
             client_ip_bytes(sock, address, spec.get("external_address", "::")),
             nonce if version == 2 else None)
         if kind == "pcp_peer":
             if version != 2:
                 raise ValueError("pcp_peer request builder requires version 2")
-            mapping += pcp_wire.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
+            mapping += pcp_packet_encoding.pcp_peer_tail(spec["peer_port"], spec["peer_address"],
                                               spec.get("peer_reserved", 0))
         request = common + mapping + pcp_options(spec.get("options", []))
         request += bytes.fromhex(spec.get("append_hex", ""))
@@ -735,7 +735,7 @@ def read_pcap_packets(path):
     """Return (timestamp seconds, Ethernet frame) pairs of a pcap file written by tcpdump -w."""
     records = []
     try:
-        for _number, timestamp, linktype, frame, _truncated in pcap.read_pcap(Path(path)):
+        for _number, timestamp, linktype, frame, _truncated in pcap_reader.read_pcap(Path(path)):
             if linktype != 1:
                 raise AssertionError(f"{path}: unsupported link type {linktype} (need Ethernet)")
             records.append((timestamp, frame))
@@ -753,7 +753,7 @@ def read_pcap_frames(path):
 def parse_udp_frame(frame):
     """Return (source ip, destination ip, source port, destination port, payload) or None."""
     try:
-        decoded = pcap.udp_payload(frame, 1)
+        decoded = pcap_reader.udp_payload(frame, 1)
     except ValueError:
         return None
     if decoded is None:
@@ -960,25 +960,25 @@ def run_self_tests():
                           "name": "t", "protocol": "pcp",
                           "request": {"use": "map-udp", "options": ["PREFER_FAILURE", {"PORT_SET": "0001c73900"}]},
                           "expect": {"opcode": "MAP_RESPONSE", "result": ["CANNOT_PROVIDE_EXTERNAL"]}}]}]}
-            case = pcp_defs.expand_corpus(corpus)["sections"][0]["cases"][0]
+            case = pcp_corpus_expander.expand_corpus(corpus)["sections"][0]["cases"][0]
             self.assertEqual(case["request"], {
                 "kind": "pcp_map", "opcode": 1, "version": 2, "client": "source",
                 "external_address": "::", "lifetime": 300, "protocol_number": 17,
                 "internal_port": 40000, "external_port": 41000,
                 "options": [{"code": 2}, {"code": 130, "data_hex": "0001c73900"}]})
             self.assertEqual(case["expect"], {"opcode": 129, "result": [11]})
-            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_TCP", "private_port": 1}),
+            self.assertEqual(pcp_corpus_expander.expand_request({"natpmp": "MAP_TCP", "private_port": 1}),
                              {"kind": "natpmp", "version": 0, "reserved": 0, "opcode": 2, "private_port": 1})
-            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_UDP", "reserved": None})["opcode"], 1)
-            self.assertNotIn("reserved", pcp_defs.expand_request({"natpmp": "MAP_UDP", "reserved": None}))
+            self.assertEqual(pcp_corpus_expander.expand_request({"natpmp": "MAP_UDP", "reserved": None})["opcode"], 1)
+            self.assertNotIn("reserved", pcp_corpus_expander.expand_request({"natpmp": "MAP_UDP", "reserved": None}))
             self.assertEqual(
-                pcp_defs.expand_request({"natpmp": "MAP_TCP", "private_port": 49001, "lifetime": 300,
+                pcp_corpus_expander.expand_request({"natpmp": "MAP_TCP", "private_port": 49001, "lifetime": 300,
                                          "truncate_to": 11}),
                 {"kind": "raw", "hex": "00020000bf690000000001"})
-            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_UDP_RESPONSE"})["opcode"], 129)
-            self.assertEqual(pcp_defs.expand_request({"header": 127})["opcode"], 127)
+            self.assertEqual(pcp_corpus_expander.expand_request({"natpmp": "MAP_UDP_RESPONSE"})["opcode"], 129)
+            self.assertEqual(pcp_corpus_expander.expand_request({"header": 127})["opcode"], 127)
             with self.assertRaises(ValueError):
-                pcp_defs.expand_request({"pcp": "NOPE"})
+                pcp_corpus_expander.expand_request({"pcp": "NOPE"})
 
         def test_sequence_shorthands(self):
             step = {"protocol": "pcp", "request": {"pcp": "MAP", "lifetime": 300, "nonce": "ab" * 12,
@@ -990,7 +990,7 @@ def run_self_tests():
                           "kind": "protocol_sequence", "cleanup": "auto",
                           "steps": [{"use": "mapped", "each": [{"request": {"internal_port": 51001}},
                                                                {"request": {"internal_port": 51002}}]}]}}]}]}
-            request = pcp_defs.expand_corpus(corpus)["sections"][0]["cases"][0]["request"]
+            request = pcp_corpus_expander.expand_corpus(corpus)["sections"][0]["cases"][0]["request"]
             first, second = request["steps"]
             self.assertEqual(first["request"]["options"], [{"code": 130, "data_hex": "0002c73900"}])
             self.assertEqual(second["request"]["internal_port"], 51002)
@@ -1253,7 +1253,7 @@ def main():
 
     corpus_path = os.path.join(os.path.dirname(__file__), "pcp-natpmp-cases.yaml")
     with open(corpus_path, encoding="utf-8") as corpus_file:
-        corpus = pcp_defs.expand_corpus(yaml.safe_load(corpus_file))
+        corpus = pcp_corpus_expander.expand_corpus(yaml.safe_load(corpus_file))
     if corpus.get("version") != 1:
         parser.error("unsupported YAML corpus version")
     profiles = corpus.get("profiles", {"baseline": {}})

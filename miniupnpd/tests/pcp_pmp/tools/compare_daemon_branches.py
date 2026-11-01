@@ -18,8 +18,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 
-from compare_pcaps import cell, load_capture, markdown
-from testpcp_natpmp import is_filtered_skip
+from compare_pcap_wire_fields import cell, load_capture, markdown
+from run_pcp_natpmp_cases import is_filtered_skip
 HARNESS = Path('miniupnpd/tests/pcp_pmp')
 STATUSES = {'PASS', 'FAIL', 'XFAIL', 'SKIP'}
 
@@ -136,7 +136,7 @@ def local_capture_command(commits, cases, profile='baseline', wan_peer=False):
         '```sh',
         'git worktree add --detach .tmp/pcp-master ' + shlex.quote(commits.get('master', 'MASTER_COMMIT')),
         'git worktree add --detach .tmp/pcp-candidate ' + shlex.quote(commits.get('candidate', 'PR_COMMIT')),
-        'python3 miniupnpd/tests/pcp_pmp/tools/compare_branches.py \\',
+        'python3 miniupnpd/tests/pcp_pmp/tools/compare_daemon_branches.py \\',
         '  --master-source .tmp/pcp-master \\',
         '  --candidate-source .tmp/pcp-candidate \\',
         '  --output .tmp/pcp-local-details --capture --profile ' + shlex.quote(profile) +

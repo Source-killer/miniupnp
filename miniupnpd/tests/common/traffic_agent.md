@@ -92,5 +92,5 @@ The PCP/NAT-PMP runner also checks its own response matching, captures, and
 traffic-agent integration without a daemon or Docker:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/testpcp_natpmp.py --self-test
+python3 miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py --self-test
 ```

@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import compare_pcaps as compare
+import compare_pcap_wire_fields as compare
 
 
 def pcp(opcode=1, response=False, body=None):

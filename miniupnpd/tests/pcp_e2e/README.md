@@ -114,7 +114,7 @@ Check YAML structure and IPv4/IPv6 MAP and FILTER wire encoding without Docker
 or a running daemon:
 
 ```sh
-python3 miniupnpd/tests/pcp_e2e/run.py --self-test
+python3 miniupnpd/tests/pcp_e2e/run_pcp_e2e_cases.py --self-test
 ```
 
 Case definitions remain in `pcp-e2e-cases.yaml`.
@@ -150,7 +150,7 @@ NAT-PMP cases are IPv4-only because NAT-PMP does not define IPv6 operation.
 FILTER cases
 exercise exact peers, remote ports, prefixes, multiple options, refresh
 updates, prefix-zero clearing, and a maximum-size request. Prefixes are chosen
-Requests are written as named packets and expanded by `../common/pcp_defs.py`:
+Requests are written as named packets and expanded by `../common/pcp_corpus_expander.py`:
 
 ```yaml
 request:

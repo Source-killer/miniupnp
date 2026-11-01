@@ -19,33 +19,33 @@ for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pard
     if os.path.isdir(_common):
         sys.path.insert(0, _common)
 
-import pcp_defs  # noqa: E402
-import pcp_wire  # noqa: E402
+import pcp_corpus_expander  # noqa: E402
+import pcp_packet_encoding  # noqa: E402
 
 try:
     import yaml
 except ImportError as exc:
     raise SystemExit("PyYAML is required") from exc
 
-RESULTS = pcp_wire.names_by_code(pcp_wire.RESULTS["pcp"])
+RESULTS = pcp_packet_encoding.names_by_code(pcp_packet_encoding.RESULTS["pcp"])
 TIMEOUT = 1.0
 
 
-v6_address = pcp_wire.ipv6_bytes
+v6_address = pcp_packet_encoding.ipv6_bytes
 
 
 def build_map_packet(client, spec, peer_addresses, nonce=None):
     nonce = nonce or os.urandom(12)
     suggested_address = spec.get("suggested_external_address")
-    body = pcp_wire.pcp_map_body(
-        pcp_wire.PROTOCOLS[spec["protocol"].upper()], spec["internal_port"],
+    body = pcp_packet_encoding.pcp_map_body(
+        pcp_packet_encoding.PROTOCOLS[spec["protocol"].upper()], spec["internal_port"],
         spec["suggested_external_port"],
         v6_address(suggested_address) if suggested_address else b"\0" * 16, nonce)
-    opcode = pcp_wire.PCP_OPCODES[spec.get("opcode", "MAP")]
-    packet = pcp_wire.pcp_header(2, opcode, spec["lifetime"], client) + body
-    if opcode == pcp_wire.PCP_OPCODES["PEER"]:
+    opcode = pcp_packet_encoding.PCP_OPCODES[spec.get("opcode", "MAP")]
+    packet = pcp_packet_encoding.pcp_header(2, opcode, spec["lifetime"], client) + body
+    if opcode == pcp_packet_encoding.PCP_OPCODES["PEER"]:
         peer = peer_addresses.get(spec["remote_peer"], spec["remote_peer"])
-        packet += pcp_wire.pcp_peer_tail(spec["remote_peer_port"], peer)
+        packet += pcp_packet_encoding.pcp_peer_tail(spec["remote_peer_port"], peer)
     filters = spec.get("filters")
     if filters is None:
         filters = [spec["filter"]] if spec.get("filter") else []
@@ -58,10 +58,10 @@ def build_map_packet(client, spec, peer_addresses, nonce=None):
         remote_port = filt.get("remote_port", 0)
         if remote_port == "any":
             remote_port = 0
-        packet += pcp_wire.pcp_filter_option(prefix, remote_port, peer) * filt.get("repeat", 1)
+        packet += pcp_packet_encoding.pcp_filter_option(prefix, remote_port, peer) * filt.get("repeat", 1)
     if spec.get("prefer_failure"):
-        packet += pcp_wire.pcp_option(pcp_wire.OPTIONS["PREFER_FAILURE"])
-    packet += pcp_wire.pcp_option(pcp_wire.OPTION_UNKNOWN_OPTIONAL) * spec.get("unknown_optional_options", 0)
+        packet += pcp_packet_encoding.pcp_option(pcp_packet_encoding.OPTIONS["PREFER_FAILURE"])
+    packet += pcp_packet_encoding.pcp_option(pcp_packet_encoding.OPTION_UNKNOWN_OPTIONAL) * spec.get("unknown_optional_options", 0)
     if len(packet) > 1100:
         raise ValueError(f"PCP request exceeds 1100-octet limit ({len(packet)} octets)")
     return packet, nonce, body
@@ -100,7 +100,7 @@ def map_request(sock, router, client, spec, peer_addresses, nonce=None):
     return result, struct.unpack("!H", response[42:44])[0], nonce
 
 
-NATPMP_RESULTS = pcp_wire.names_by_code(pcp_wire.RESULTS["natpmp"])
+NATPMP_RESULTS = pcp_packet_encoding.names_by_code(pcp_packet_encoding.RESULTS["natpmp"])
 
 
 def natpmp_request(sock, router, spec):
@@ -110,7 +110,7 @@ def natpmp_request(sock, router, spec):
         expected_opcode = 128
     else:
         protocol_opcode = {"udp": 1, "tcp": 2}[spec["protocol"]]
-        packet = pcp_wire.natpmp_packet(protocol_opcode, spec["private_port"],
+        packet = pcp_packet_encoding.natpmp_packet(protocol_opcode, spec["private_port"],
                                         spec["public_port"], spec["lifetime"])
         expected_opcode = 128 + protocol_opcode
     sock.sendto(packet, (router, 5351))
@@ -315,7 +315,7 @@ def self_test(corpus):
     natpmp_address = bytes((0, 0))
     natpmp_udp = struct.pack("!BBHHHI", 0, 1, 0, 41100, 41100, 120)
     assert natpmp_address == b"\0\0" and len(natpmp_udp) == 12 and natpmp_udp[1] == 1
-    named = pcp_defs.expand_e2e_request({
+    named = pcp_corpus_expander.expand_e2e_request({
         "pcp": "MAP", "lifetime": 120, "protocol": "udp", "internal_port": 1, "suggested_external_port": 1,
         "options": [{"FILTER": "allowed-peer"}, {"FILTER": {"remote_peer": "denied-peer", "remote_port": 5,
                     "prefix_length": 24}}, "PREFER_FAILURE", {"UNKNOWN_OPTIONAL": 2}]})
@@ -323,10 +323,10 @@ def self_test(corpus):
     assert named["filters"] == [
         {"remote_peer": "allowed-peer", "remote_port": 0, "prefix_length": {"ipv4": 32, "ipv6": 128}},
         {"remote_peer": "denied-peer", "remote_port": 5, "prefix_length": 24}]
-    assert pcp_defs.expand_e2e_request({"natpmp": "TCP", "private_port": 1}) == {
+    assert pcp_corpus_expander.expand_e2e_request({"natpmp": "TCP", "private_port": 1}) == {
         "protocol_family": "NAT-PMP", "opcode": "TCP", "protocol": "tcp", "private_port": 1}
     try:
-        pcp_defs.expand_e2e_request({"pcp": "MAP", "options": ["PREFER_FAILURE", {"FILTER": "x"}]})
+        pcp_corpus_expander.expand_e2e_request({"pcp": "MAP", "options": ["PREFER_FAILURE", {"FILTER": "x"}]})
     except ValueError:
         pass
     else:
@@ -556,7 +556,7 @@ def main():
     if args.family == "ipv6" and args.external_address == "198.51.100.1":
         args.external_address = "2001:db8:9000::1"
     with open(args.cases, encoding="utf-8") as source:
-        corpus = pcp_defs.expand_e2e_corpus(yaml.safe_load(source))
+        corpus = pcp_corpus_expander.expand_e2e_corpus(yaml.safe_load(source))
     if args.self_test:
         self_test(corpus)
         return 0

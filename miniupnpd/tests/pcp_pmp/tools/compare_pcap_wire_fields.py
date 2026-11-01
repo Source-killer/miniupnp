@@ -11,10 +11,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'common'))
 
-import pcp_wire  # noqa: E402
-from pcap import named, read_pcap, udp_payload  # noqa: E402,F401
+import pcp_packet_encoding  # noqa: E402
+from pcap_reader import named, read_pcap, udp_payload  # noqa: E402,F401
 
-_PCP_NAMES = pcp_wire.names_by_code(pcp_wire.RESULTS['pcp'])
+_PCP_NAMES = pcp_packet_encoding.names_by_code(pcp_packet_encoding.RESULTS['pcp'])
 PCP_RESULTS = tuple(_PCP_NAMES[code] for code in sorted(_PCP_NAMES))
 PMP_RESULTS = ('SUCCESS', 'UNSUPP_VERSION', 'NOT_AUTHORIZED',
                'NETWORK_FAILURE', 'NO_RESOURCES', 'UNSUPP_OPCODE')

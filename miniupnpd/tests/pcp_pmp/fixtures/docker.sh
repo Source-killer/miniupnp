@@ -59,7 +59,7 @@ attempt=0
 while [ "$attempt" -lt 20 ]; do
 	if "$DOCKER_BIN" run --rm --network "$NETWORK" \
 		--entrypoint python3 "$IMAGE" \
-		/src/miniupnpd/tests/pcp_pmp/testpcp_natpmp.py \
+		/src/miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py \
 		--host pcp-router --port 5351 \
 		--protocol natpmp --case public-address >/dev/null 2>&1; then
 		ready=1

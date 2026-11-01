@@ -44,7 +44,7 @@ jobs:
 
       - name: Run harness self-tests
         run: |
-          python3 miniupnpd/tests/pcp_e2e/run.py --self-test
+          python3 miniupnpd/tests/pcp_e2e/run_pcp_e2e_cases.py --self-test
           python3 miniupnpd/tests/common/traffic_agent.py --self-test
           sh -n miniupnpd/tests/pcp_e2e/run-docker.sh
 

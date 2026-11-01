@@ -14,10 +14,10 @@ limits on what the tests establish.
 | File | Purpose |
 |---|---|
 | [`testpcp_natpmp_docker.sh`](testpcp_natpmp_docker.sh) | Build and run an isolated Docker fixture, invoke the Python runner, and clean up. |
-| [`testpcp_natpmp.py`](testpcp_natpmp.py) | Execute YAML cases against a daemon, or check the harness with `--self-test`. |
+| [`run_pcp_natpmp_cases.py`](run_pcp_natpmp_cases.py) | Execute YAML cases against a daemon, or check the harness with `--self-test`. |
 | [`pcp-natpmp-cases.yaml`](pcp-natpmp-cases.yaml) | Define protocol requests, operations, profiles, and expected outcomes. |
-| [`tools/compare_pcaps.py`](tools/compare_pcaps.py) | Decode and compare two packet captures. |
-| [`tools/compare_branches.py`](tools/compare_branches.py) | Run identical cases against two committed daemon versions and report regressions. |
+| [`tools/compare_pcap_wire_fields.py`](tools/compare_pcap_wire_fields.py) | Decode and compare two packet captures. |
+| [`tools/compare_daemon_branches.py`](tools/compare_daemon_branches.py) | Run identical cases against two committed daemon versions and report regressions. |
 | [`../common/traffic_agent.py`](../common/traffic_agent.py) | Configure the WAN fixture and run the [shared traffic agent](../common/traffic_agent.md). |
 
 Run the commands below from the repository root.
@@ -25,7 +25,7 @@ Run the commands below from the repository root.
 ## Check the harness itself
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/testpcp_natpmp.py --self-test
+python3 miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py --self-test
 ```
 
 This checks variable resolution, bounded captures, response validation,
@@ -37,7 +37,7 @@ Protocol cases and their expectations remain in `pcp-natpmp-cases.yaml`.
 
 ### Writing packets in the corpus
 
-Requests are written as named PCP / NAT-PMP packets; `../common/pcp_defs.py` expands them
+Requests are written as named PCP / NAT-PMP packets; `../common/pcp_corpus_expander.py` expands them
 into the low-level `kind:` form the runner builds bytes from (a request that
 still has `kind:` is used as is, for raw or unusual packets).
 
@@ -70,7 +70,7 @@ expect:
   `truncate_to: N` sends only the first N bytes, which replaces raw hex for short datagrams.
   `verify: natpmp-mapping` derives the usual private/external port and lifetime checks.
 
-Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `../common/pcp_defs.py`:
+Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `../common/pcp_corpus_expander.py`:
 
 ```yaml
 defs:
@@ -155,7 +155,7 @@ PCP_TEST_CAPTURE=0 PCP_TEST_RESULTS_DIR="$PWD/.tmp/pcp-results" \
 Install PyYAML (for example, the `python3-yaml` package), then run:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/testpcp_natpmp.py --host 192.0.2.1
+python3 miniupnpd/tests/pcp_pmp/run_pcp_natpmp_cases.py --host 192.0.2.1
 ```
 
 These packets reach a real daemon, so use a disposable test instance.
@@ -285,7 +285,7 @@ folder and includes it in the status report.
 Select two per-case captures and write their decoded wire fields to Markdown:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/tools/compare_pcaps.py \
+python3 miniupnpd/tests/pcp_pmp/tools/compare_pcap_wire_fields.py \
   .tmp/packet-captures/BEFORE_RUN/ipv4-pcp-filter-on-map-deletion.pcap \
   .tmp/packet-captures/AFTER_RUN/ipv4-pcp-filter-on-map-deletion.pcap \
   --output comparison.md
@@ -320,7 +320,7 @@ For packet-alignment and interpretation limits, see
 Run the offline decoder checks with:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/tools/test_compare_pcaps.py
+python3 miniupnpd/tests/pcp_pmp/tools/test_compare_pcap_wire_fields.py
 ```
 
 ## Compare master with a pull request in CI
@@ -358,7 +358,7 @@ Add `--capture` to collect pcaps, tcpdump logs and decoded before/after
 Markdown field tables:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/tools/compare_branches.py \
+python3 miniupnpd/tests/pcp_pmp/tools/compare_daemon_branches.py \
   --master-source /path/to/master-checkout \
   --candidate-source /path/to/pr-checkout \
   --output .tmp/master-pr-comparison --capture
@@ -397,7 +397,7 @@ address family, and each case's status and detail.
 Run the offline comparison-policy and report-completeness checks with:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/tools/test_compare_branches.py
+python3 miniupnpd/tests/pcp_pmp/tools/test_compare_daemon_branches.py
 ```
 
 ## Corpus and expected failures
@@ -496,7 +496,7 @@ Only one instance of the fixed-subnet Docker fixture can run on a host at once.
 Master/PR comparison and local packet diagnostics support the same profiles:
 
 ```sh
-python3 miniupnpd/tests/pcp_pmp/tools/compare_branches.py \
+python3 miniupnpd/tests/pcp_pmp/tools/compare_daemon_branches.py \
   --master-source /path/to/master --candidate-source /path/to/pr \
   --output .tmp/port-set-details --profile port-set --wan-peer --capture
 ```

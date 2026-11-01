@@ -274,7 +274,7 @@ run_family() {
       --volume "$DIR:/pcp-e2e:ro" --volume "$ROOT/miniupnpd/tests/common:/pcp-common:ro" \
       --volume "$RUN_DIR:/pcp-e2e-artifacts" \
       "$IMAGE" -c 'if [ "$1" = add ]; then ip -6 address replace fd42:1::2/64 dev eth0 nodad; fi; shift; exec python3 "$@"' \
-      pcp-e2e-runner "$runner_ula" /pcp-e2e/run.py \
+      pcp-e2e-runner "$runner_ula" /pcp-e2e/run_pcp_e2e_cases.py \
       --route-through-router --family "$family" --case "$case_name" \
       --router "$case_router" --client-address "$case_client" --external-address "$external" \
       --agent "allowed-peer=$allow_url" --agent "denied-peer=$deny_url" \
