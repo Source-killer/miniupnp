@@ -1,0 +1,304 @@
+"""Human-readable PCP / NAT-PMP packet definitions for pcp-natpmp-cases.yaml.
+
+Cases are written with symbolic names; `expand_corpus` turns them into the
+low-level request/expect dictionaries that testpcp_natpmp.py builds packets from.
+
+Request forms (anything containing `kind:` is passed through unchanged):
+
+  pcp: MAP | PEER | AUTHENTICATION      full opcode packet
+      protocol: UDP | TCP | <number>    (MAP/PEER)
+      nonce: <24 hex digits>
+      options: [PREFER_FAILURE, {PORT_SET: '0001c73900'}, {code: 99, data_hex: ''}]
+      port_set: <size> | {size: N, first: P, parity: true}
+                                        PORT_SET option (first defaults to internal_port)
+      a key set to null removes its default
+      defaults: version 2, client source, external_address '::', external_port 0
+  header: ANNOUNCE | MAP | <number>     common header only (malformed-packet tests)
+  natpmp: PUBLIC_ADDRESS | MAP_UDP | MAP_TCP     defaults: version 0
+  use: <name>                           start from `defs.packets.<name>`; keys
+                                        given next to `use` override the template
+
+Steps of a `protocol_sequence` request (and its `cleanup`) can also use:
+
+  use: <name>            start from `defs.steps.<name>`; keys next to `use` are
+                         deep-merged over the template (a `null` value deletes a key)
+  each: [<override>...]  expand to one step per override, each merged over the
+                         template / step body
+  verify: mapping | port-set-mapping
+                         fill in the standard MAP response `captures` and `assert`
+                         values derived from the request (internal port, nonce,
+                         protocol, lifetime and, for port-set-mapping, the PORT_SET
+                         option); explicit `captures` / `assert` entries override
+  cleanup: auto          delete every distinct successful MAP the steps created
+                         (order not significant)
+
+Options: `{PORT_SET: {size: 4, first: 51001, parity: true}}` encodes the RFC 7753
+option data; a hex string is used as is.
+
+Expectations: `result` lists use result names and response `opcode` values use
+names such as MAP_RESPONSE; plain numbers are always accepted.
+"""
+
+import copy
+import struct
+
+PCP_OPCODES = {"ANNOUNCE": 0, "MAP": 1, "PEER": 2, "AUTHENTICATION": 3}
+NATPMP_OPCODES = {"PUBLIC_ADDRESS": 0, "MAP_UDP": 1, "MAP_TCP": 2}
+PROTOCOLS = {"UDP": 17, "TCP": 6}
+OPTIONS = {"THIRD_PARTY": 1, "PREFER_FAILURE": 2, "FILTER": 3, "NONCE": 4, "PORT_SET": 130}
+RESULTS = {
+    "pcp": {"SUCCESS": 0, "UNSUPP_VERSION": 1, "NOT_AUTHORIZED": 2, "MALFORMED_REQUEST": 3,
+            "UNSUPP_OPCODE": 4, "UNSUPP_OPTION": 5, "MALFORMED_OPTION": 6, "NETWORK_FAILURE": 7,
+            "NO_RESOURCES": 8, "UNSUPP_PROTOCOL": 9, "USER_EX_QUOTA": 10,
+            "CANNOT_PROVIDE_EXTERNAL": 11, "ADDRESS_MISMATCH": 12, "EXCESSIVE_REMOTE_PEERS": 13},
+    "natpmp": {"SUCCESS": 0, "UNSUPP_VERSION": 1, "NOT_AUTHORIZED": 2, "NETWORK_FAILURE": 3,
+               "OUT_OF_RESOURCES": 4, "UNSUPP_OPCODE": 5},
+}
+RESPONSE_OPCODES = {
+    "pcp": {name + "_RESPONSE": 128 + code for name, code in PCP_OPCODES.items()},
+    "natpmp": {name + "_RESPONSE": 128 + code for name, code in NATPMP_OPCODES.items()},
+}
+# symbolic field -> low-level field
+MAP_RENAMES = {"nonce": "nonce_hex", "peer": "peer_address"}
+MAP_DEFAULTS = {"version": 2, "client": "source", "external_address": "::", "external_port": 0}
+NATPMP_DEFAULTS = {"version": 0}
+
+
+def _lookup(table, value, what):
+    if isinstance(value, int):
+        return value
+    if value not in table:
+        raise ValueError(f"unknown {what} {value!r}")
+    return table[value]
+
+
+def expand_option(option):
+    if isinstance(option, str):
+        return {"code": _lookup(OPTIONS, option, "option")}
+    if isinstance(option, dict) and "code" not in option and "raw_hex" not in option:
+        (name, data), = option.items()
+        if isinstance(data, dict):
+            if name != "PORT_SET":
+                raise ValueError(f"option {name} has no structured form")
+            data = struct.pack("!HHB", data["size"], data["first"], 1 if data.get("parity") else 0).hex()
+        return {"code": _lookup(OPTIONS, name, "option"), "data_hex": data}
+    return dict(option)
+
+
+def expand_request(spec):
+    """Expand one symbolic request; low-level (`kind:`) requests pass through."""
+    if "kind" in spec:
+        return spec
+    spec = dict(spec)
+    if "pcp" in spec:
+        name = spec.pop("pcp")
+        opcode = _lookup(PCP_OPCODES, name, "PCP opcode")
+        out = {"kind": {1: "pcp_map", 2: "pcp_peer", 3: "pcp_auth"}[opcode], "opcode": opcode}
+        if opcode != 3:
+            out.update(MAP_DEFAULTS)
+        for key, value in spec.items():
+            if key == "protocol":
+                out["protocol_number"] = _lookup(PROTOCOLS, value, "protocol")
+            elif key == "options":
+                out["options"] = [expand_option(item) for item in value]
+            elif key == "port_set":
+                continue
+            else:
+                out[MAP_RENAMES.get(key, key)] = value
+        if "port_set" in spec:
+            if "options" in spec:
+                raise ValueError("port_set cannot be combined with options")
+            size = spec["port_set"]
+            port_set = size if isinstance(size, dict) else {"size": size}
+            out["options"] = [expand_option({"PORT_SET": {"first": out["internal_port"], **port_set}})]
+        return {key: value for key, value in out.items() if value is not None}
+    if "header" in spec:
+        out = {"kind": "pcp_header", "version": 2,
+               "opcode": _lookup(PCP_OPCODES, spec.pop("header"), "PCP opcode")}
+        out.update(spec)
+        return out
+    if "natpmp" in spec:
+        out = {"kind": "natpmp", **NATPMP_DEFAULTS,
+               "opcode": _lookup(NATPMP_OPCODES, spec.pop("natpmp"), "NAT-PMP opcode")}
+        out.update(spec)
+        return out
+    raise ValueError(f"request has no pcp/header/natpmp/kind key: {sorted(spec)}")
+
+
+def expand_expect(expect, protocol):
+    if not isinstance(expect, dict) or protocol not in RESULTS:
+        return expect
+    expect = dict(expect)
+    if isinstance(expect.get("result"), list):
+        expect["result"] = [_lookup(RESULTS[protocol], item, "result") for item in expect["result"]]
+    if isinstance(expect.get("opcode"), str):
+        expect["opcode"] = _lookup(RESPONSE_OPCODES[protocol], expect["opcode"], "response opcode")
+    return expect
+
+
+def _apply_use(request, packets):
+    if isinstance(request, dict) and "use" in request:
+        request = dict(request)
+        template = copy.deepcopy(packets[request.pop("use")])
+        template.update(request)
+        return template
+    return request
+
+
+def _walk(node, protocol, packets):
+    if isinstance(node, list):
+        return [_walk(item, protocol, packets) for item in node]
+    if not isinstance(node, dict):
+        return node
+    protocol = node.get("protocol", protocol) if node.get("protocol") in RESULTS else protocol
+    out = {}
+    for key, value in node.items():
+        if key == "request" and isinstance(value, dict):
+            value = expand_request(_apply_use(value, packets))
+        elif key == "expect":
+            value = expand_expect(value, protocol)
+        if key in ("request", "expect"):
+            out[key] = _walk_children(value, protocol, packets)
+        else:
+            out[key] = _walk(value, protocol, packets)
+    return out
+
+
+def _walk_children(node, protocol, packets):
+    # `steps` / `cleanup` inside a protocol_sequence request carry their own protocol.
+    if isinstance(node, dict):
+        return {key: (_walk(value, protocol, packets) if key in ("steps", "cleanup") else value)
+                for key, value in node.items()}
+    return node
+
+
+MAPPING_CAPTURES = {
+    "internal": {"offset": 40, "type": "u16"}, "external": {"offset": 42, "type": "u16"},
+    "lifetime": {"offset": 4, "type": "u32"}, "nonce": {"offset": 24, "type": "hex", "length": 12},
+    "protocol_reserved": {"offset": 36, "type": "u32"},
+    "external_address": {"offset": 44, "type": "address"}}
+PORT_SET_CAPTURES = {
+    "option_header": {"offset": 60, "type": "u32"}, "size": {"offset": 64, "type": "u16"},
+    "first": {"offset": 66, "type": "u16"}, "flags": {"offset": 68, "type": "u8"},
+    "padding_first": {"offset": 69, "type": "u8"}, "padding": {"offset": 70, "type": "u16"}}
+PORT_SET_OPTION_HEADER = 0x82000005
+
+
+def deep_merge(base, over):
+    """Merge `over` into a copy of `base`; dicts merge, `None` deletes, the rest replaces."""
+    out = copy.deepcopy(base)
+    for key, value in over.items():
+        if value is None:
+            out.pop(key, None)
+        elif isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def _override(derived, explicit):
+    """Per-key replacement of derived entries; a `null` entry removes the key."""
+    out = {**copy.deepcopy(derived), **copy.deepcopy(explicit)}
+    return {key: value for key, value in out.items() if value is not None}
+
+
+def derive_checks(mode, request):
+    """Standard captures and asserts for a MAP response to `request`."""
+    captures = copy.deepcopy(MAPPING_CAPTURES)
+    checks = {"internal": {"equals": request["internal_port"]},
+              "nonce": {"equals": request["nonce_hex"]},
+              "protocol_reserved": {"equals": request["protocol_number"] << 24},
+              "lifetime": {"equals": 0} if request["lifetime"] == 0 else {"min": 1, "max": 600}}
+    if mode == "port-set-mapping":
+        data = next(bytes.fromhex(o["data_hex"]) for o in request["options"] if o["code"] == 130)
+        size, first = struct.unpack("!HH", data[:4])
+        captures.update(copy.deepcopy(PORT_SET_CAPTURES))
+        checks.update({"option_header": {"equals": PORT_SET_OPTION_HEADER}, "size": {"equals": size},
+                       "first": {"equals": first}, "flags": {"max": 1},
+                       "padding_first": {"equals": 0}, "padding": {"equals": 0}})
+    elif mode != "mapping":
+        raise ValueError(f"unknown verify mode {mode!r}")
+    return captures, checks
+
+
+def expand_step(step, case_protocol, templates):
+    if "use" in step:
+        step = deep_merge(templates[step["use"]], {k: v for k, v in step.items() if k != "use"})
+    step = dict(step)
+    protocol = step.get("protocol", case_protocol)
+    if isinstance(step.get("request"), dict):
+        step["request"] = expand_request(step["request"])
+    if "expect" in step:
+        step["expect"] = expand_expect(step["expect"], protocol)
+    if "verify" in step:
+        captures, checks = derive_checks(step.pop("verify"), step["request"])
+        step["captures"] = _override(captures, step.get("captures", {}))
+        step["assert"] = _override(checks, step.get("assert", {}))
+    return step
+
+
+def auto_cleanup(steps):
+    """Delete each distinct successful MAP created by `steps`."""
+    out, seen = [], set()
+    for step in steps:
+        request = step.get("request", {})
+        if (request.get("kind") != "pcp_map" or not isinstance(request.get("lifetime"), int)
+                or request["lifetime"] <= 0 or step.get("expect", {}).get("result") != [0]):
+            continue
+        key = (request["nonce_hex"], request["protocol_number"], request["internal_port"])
+        if key in seen:
+            continue
+        seen.add(key)
+        delete = dict(request, lifetime=0, external_port=0)
+        optional = any(o.get("code") == 130 and len(bytes.fromhex(o.get("data_hex", ""))) >= 4
+                       for o in request.get("options", []))
+        step_out = {"protocol": step["protocol"], "request": delete,
+                    "expect": {"version": 2, "opcode": 129, "result": [0],
+                               "length": [60, 72] if optional else 60}}
+        captures, checks = derive_checks("mapping", delete)
+        step_out["captures"], step_out["assert"] = captures, checks
+        out.append(step_out)
+    return out
+
+
+def expand_sequence(request, case_protocol, templates):
+    request = dict(request)
+    for key in ("steps", "cleanup"):
+        if key == "cleanup" and request.get(key) == "auto":
+            continue
+        expanded = []
+        for step in request.get(key, []):
+            if "each" in step:
+                body = {k: v for k, v in step.items() if k != "each"}
+                for override in step["each"]:
+                    expanded.append(expand_step(deep_merge(body, override), case_protocol, templates))
+            else:
+                expanded.append(expand_step(step, case_protocol, templates))
+        if key in request:
+            request[key] = expanded
+    if request.get("cleanup") == "auto":
+        request["cleanup"] = auto_cleanup(request["steps"])
+    return request
+
+
+def _expand_case_steps(case, templates):
+    request = case.get("request")
+    if isinstance(request, dict) and request.get("kind") == "protocol_sequence":
+        case = dict(case, request=expand_sequence(request, case.get("protocol"), templates))
+    return case
+
+
+def expand_corpus(corpus):
+    """Return a corpus with all symbolic requests/expectations expanded."""
+    packets = corpus.get("defs", {}).get("packets", {})
+    templates = corpus.get("defs", {}).get("steps", {})
+    out = {key: value for key, value in corpus.items() if key != "defs"}
+    sections = []
+    for section in corpus["sections"]:
+        section = dict(section)
+        section["cases"] = [_walk(_expand_case_steps(case, templates), case.get("protocol"), packets)
+                            for case in section["cases"]]
+        sections.append(section)
+    out["sections"] = sections
+    return out

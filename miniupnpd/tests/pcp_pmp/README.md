@@ -35,6 +35,71 @@ no daemon, Docker, PyYAML, or YAML corpus is required. It writes no status,
 results, or packet captures, and returns a nonzero exit status on failure.
 Protocol cases and their expectations remain in `pcp-natpmp-cases.yaml`.
 
+### Writing packets in the corpus
+
+Requests are written as named PCP / NAT-PMP packets; `pcp_defs.py` expands them
+into the low-level `kind:` form the runner builds bytes from (a request that
+still has `kind:` is used as is, for raw or unusual packets).
+
+```yaml
+request:
+  pcp: MAP                  # or PEER, AUTHENTICATION
+  lifetime: 300
+  protocol: UDP             # UDP | TCP | number
+  internal_port: 47202
+  external_port: 48201
+  nonce: '271828182845904523536028'
+  options: [PREFER_FAILURE, {PORT_SET: '0001c73900'}]
+expect:
+  opcode: MAP_RESPONSE
+  result: [CANNOT_PROVIDE_EXTERNAL]
+```
+
+- `pcp:` defaults to version 2, `client: source`, `external_address: '::'`.
+- `header: ANNOUNCE | <number>` sends only the common header; `natpmp: PUBLIC_ADDRESS |
+  MAP_UDP | MAP_TCP` defaults to version 0.
+- Option names: `THIRD_PARTY`, `PREFER_FAILURE`, `FILTER`, `NONCE`, `PORT_SET`;
+  other options use `{code: N, data_hex: ...}`.
+- Result names depend on the case or step `protocol` (PCP or NAT-PMP).
+- `port_set: 4` is shorthand for a PORT_SET option whose first port is the
+  request's `internal_port` (`port_set: {size: 4, parity: true}` sets parity);
+  `{PORT_SET: {size: 4, first: 51001}}` spells it out and a hex string is still accepted.
+- `external_port` defaults to 0; set it to `null` to omit the field.
+
+Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `pcp_defs.py`:
+
+```yaml
+defs:
+  steps:                               # reusable steps
+    map-not-authorized-echo:
+      protocol: pcp
+      expect: {version: 2, opcode: MAP_RESPONSE, result: [NOT_AUTHORIZED], length: 72}
+      request: {pcp: MAP}
+request:
+  kind: protocol_sequence
+  steps:
+  - protocol: pcp
+XX
+    expect: {version: 2, opcode: MAP_RESPONSE, result: [SUCCESS], length: 72}
+    verify: port-set-mapping           # derived captures + asserts
+    assert: {external: {nonzero: true}}   # overrides; null removes a derived assert
+  - use: map-not-authorized-echo       # template; keys here are deep-merged over it
+    request: {protocol: UDP, lifetime: 300, nonce: ffeeddccbbaa998877665544, port_set: 1}
+    each:                              # one step per entry
+    - request: {internal_port: 51002}
+    - request: {internal_port: 51003}
+  cleanup: auto                        # delete every distinct successful MAP
+```
+
+- `verify: mapping` captures the standard MAP response fields and asserts the
+  internal port, nonce, protocol and lifetime (0 for a delete, otherwise 1..600)
+  from the request; `port-set-mapping` adds the PORT_SET option fields. Entries
+  under `assert:` or `captures:` replace the derived entry of the same name.
+- `cleanup: auto` sends a lifetime-0 MAP for each distinct (nonce, protocol,
+  internal port) the steps created successfully, in no particular order.
+- A top-level `defs.packets.<name>` mapping defines a reusable packet; a request
+  with `use: <name>` starts from it and its own keys override the template.
+
 ## Run in Docker
 
 From the repository root:

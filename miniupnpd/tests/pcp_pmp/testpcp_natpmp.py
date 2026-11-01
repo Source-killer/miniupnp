@@ -24,6 +24,8 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
+import pcp_defs
+
 TIMEOUT = 2.0
 
 
@@ -993,6 +995,52 @@ def run_self_tests():
             return self.timeout
 
     class RunnerTests(unittest.TestCase):
+        def test_packet_definitions(self):
+            corpus = {"defs": {"packets": {"map-udp": {
+                          "pcp": "MAP", "lifetime": 300, "protocol": "UDP",
+                          "internal_port": 40000, "external_port": 41000}}},
+                      "sections": [{"cases": [{
+                          "name": "t", "protocol": "pcp",
+                          "request": {"use": "map-udp", "options": ["PREFER_FAILURE", {"PORT_SET": "0001c73900"}]},
+                          "expect": {"opcode": "MAP_RESPONSE", "result": ["CANNOT_PROVIDE_EXTERNAL"]}}]}]}
+            case = pcp_defs.expand_corpus(corpus)["sections"][0]["cases"][0]
+            self.assertEqual(case["request"], {
+                "kind": "pcp_map", "opcode": 1, "version": 2, "client": "source",
+                "external_address": "::", "lifetime": 300, "protocol_number": 17,
+                "internal_port": 40000, "external_port": 41000,
+                "options": [{"code": 2}, {"code": 130, "data_hex": "0001c73900"}]})
+            self.assertEqual(case["expect"], {"opcode": 129, "result": [11]})
+            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_TCP", "private_port": 1}),
+                             {"kind": "natpmp", "version": 0, "opcode": 2, "private_port": 1})
+            self.assertEqual(pcp_defs.expand_request({"header": 127})["opcode"], 127)
+            with self.assertRaises(ValueError):
+                pcp_defs.expand_request({"pcp": "NOPE"})
+
+        def test_sequence_shorthands(self):
+            step = {"protocol": "pcp", "request": {"pcp": "MAP", "lifetime": 300, "nonce": "ab" * 12,
+                                                   "protocol": "UDP", "internal_port": 51001, "port_set": 2},
+                    "expect": {"opcode": "MAP_RESPONSE", "result": ["SUCCESS"], "length": 72},
+                    "verify": "port-set-mapping", "assert": {"external": {"nonzero": True}}}
+            corpus = {"defs": {"steps": {"mapped": step}},
+                      "sections": [{"cases": [{"name": "t", "protocol": "pcp", "request": {
+                          "kind": "protocol_sequence", "cleanup": "auto",
+                          "steps": [{"use": "mapped", "each": [{"request": {"internal_port": 51001}},
+                                                               {"request": {"internal_port": 51002}}]}]}}]}]}
+            request = pcp_defs.expand_corpus(corpus)["sections"][0]["cases"][0]["request"]
+            first, second = request["steps"]
+            self.assertEqual(first["request"]["options"], [{"code": 130, "data_hex": "0002c73900"}])
+            self.assertEqual(second["request"]["internal_port"], 51002)
+            self.assertEqual(first["assert"]["size"], {"equals": 2})
+            self.assertEqual(first["assert"]["first"], {"equals": 51001})
+            self.assertEqual(first["assert"]["protocol_reserved"], {"equals": 17 << 24})
+            self.assertEqual(first["assert"]["external"], {"nonzero": True})
+            self.assertEqual(first["captures"]["first"], {"offset": 66, "type": "u16"})
+            self.assertEqual([item["request"]["internal_port"] for item in request["cleanup"]],
+                             [51001, 51002])
+            self.assertEqual(request["cleanup"][0]["request"]["lifetime"], 0)
+            self.assertEqual(request["cleanup"][0]["expect"]["length"], [60, 72])
+            self.assertNotIn("first", request["cleanup"][0]["captures"])
+
         def test_variables_and_captures(self):
             self.assertEqual(resolve_request(
                 {"port": {"add": ["$start", 3]}, "values": ["$start"]}, {"start": 1000}),
@@ -1241,7 +1289,7 @@ def main():
 
     corpus_path = os.path.join(os.path.dirname(__file__), "pcp-natpmp-cases.yaml")
     with open(corpus_path, encoding="utf-8") as corpus_file:
-        corpus = yaml.safe_load(corpus_file)
+        corpus = pcp_defs.expand_corpus(yaml.safe_load(corpus_file))
     if corpus.get("version") != 1:
         parser.error("unsupported YAML corpus version")
     profiles = corpus.get("profiles", {"baseline": {}})
