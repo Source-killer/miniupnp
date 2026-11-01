@@ -1257,7 +1257,7 @@ def main():
         for case in section["cases"]:
             case["section"] = section["title"]
             cases.append(case)
-    request_kinds = {"raw", "pcp_header", "pcp_map", "pcp_peer", "pcp_auth", "pcp_auth_sequence", "natpmp", "lifecycle", "protocol_sequence", "daemon_restart"}
+    request_kinds = {"raw", "pcp_header", "pcp_map", "pcp_peer", "pcp_auth", "pcp_auth_sequence", "natpmp", "lifecycle", "protocol_sequence", "daemon_restart", "wan_renumber"}
     for case in cases:
         if not set(case.get("profiles", profiles)).issubset(profiles):
             parser.error(f"{case['name']}: unknown server profile")
@@ -1265,7 +1265,7 @@ def main():
             parser.error("every YAML case needs name, protocol, families, request and expect")
         if case["request"].get("kind") not in request_kinds:
             parser.error(f"unsupported request kind in case {case['name']}")
-        if case["expect"].get("kind") not in {"response", "silence", "lifecycle", "auth_sequence", "unsolicited_announce"}:
+        if case["expect"].get("kind") not in {"response", "silence", "lifecycle", "auth_sequence", "unsolicited_announce", "mapping_update"}:
             parser.error(f"unsupported expectation kind in case {case['name']}")
         if case["expect"]["kind"] == "response":
             required = {"version", "opcode", "result"}
@@ -1288,7 +1288,7 @@ def main():
                 parser.error(f"{case['name']}: prerequisite {dependency} lacks a required family")
             if not set(case.get("profiles", profiles)).issubset(prerequisite.get("profiles", profiles)):
                 parser.error(f"{case['name']}: prerequisite {dependency} lacks a required profile")
-        if set(case.get("requires", [])) - {"wan-peer", "daemon-restart", "pcp-peer"}:
+        if set(case.get("requires", [])) - {"wan-peer", "daemon-restart", "pcp-peer", "wan-renumber"}:
             parser.error(f"{case['name']}: unknown required fixture")
         earlier_cases[f"{case['protocol']}/{case['name']}"] = case
     if args.family == "ipv6":
@@ -1350,6 +1350,12 @@ def main():
                 unsupported = [item for item in case.get("requires", []) if item in args.unsupported]
                 if unsupported:
                     reason = f"requires {unsupported[0]}, unsupported on this platform"
+                    print(f"SKIP {protocol}/{case_name}: {reason}")
+                    outcomes[(protocol, case_name)] = ("SKIP", reason)
+                    continue
+                if "wan-renumber" in case.get("requires", []):
+                    # No fixture implements `wan-renumber` yet (see README "Cases that restart the daemon").
+                    reason = "requires wan-renumber fixture (not provided by any fixture yet)"
                     print(f"SKIP {protocol}/{case_name}: {reason}")
                     outcomes[(protocol, case_name)] = ("SKIP", reason)
                     continue

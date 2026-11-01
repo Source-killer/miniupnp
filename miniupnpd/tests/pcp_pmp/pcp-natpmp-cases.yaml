@@ -428,6 +428,214 @@ sections:
     description: After a daemon restart, repeat the multicast ANNOUNCE on every LAN interface at most ten times,
       with the first gap at least 250 ms, each later gap at least doubling, and a nondecreasing Epoch Time that
       tracks the elapsed time.
+- title: 'RFC 6887 PCP: Mapping Update (rapid recovery)'
+  description: Unsolicited MAP responses a gateway sends on its own after it repairs its mappings, for example when the
+    external address changes. Each case renumbers the external address through a fixture after the client has created
+    the mapping, and records the packets the client receives. No fixture provides wan-renumber yet, so these cases
+    report SKIP; the known_failure records that miniupnpd does not implement the mechanism.
+  cases:
+  # RFC 6887 §14: a server MUST implement the ANNOUNCE Opcode or Mapping Update and SHOULD implement both.
+  # miniupnpd implements only ANNOUNCE (see 'Unsolicited ANNOUNCE'); these cases cover the other mechanism.
+  - name: mapping-update-after-wan-change
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 0
+      external_address: changed
+    description: 'RFC 6887 §14.2: after the external address changes, unicast an unsolicited MAP response to the client address and port that received the prior response, with the new External IP Address and External Port.'
+  - name: mapping-update-three-transmissions
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 0
+      count: 3
+      min_first_gap_ms: 250
+      second_gap_ms: 500
+      epoch_nondecreasing: true
+    description: 'RFC 6887 §14.2: send the update three times, the first gap at least 250 ms and the third packet after a 500 ms interval, with an Epoch Time reflecting the elapsed time.'
+  - name: mapping-update-echoes-third-party
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+      options:
+      - code: 1
+        data_hex: '00000000000000000000ffffc0000263'
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 0
+      options_present:
+      - code: 1
+        data_hex: '00000000000000000000ffffc0000263'
+    description: 'RFC 6887 §14.2: if the original request carried THIRD_PARTY, the Mapping Update MUST carry the same THIRD_PARTY option so the client can disambiguate it.'
+  - name: mapping-update-prefer-failure
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+      options:
+      - code: 2
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 11
+    description: 'RFC 6887 §14.2: a mapping created with PREFER_FAILURE whose external address and port cannot be kept SHOULD be reported with CANNOT_PROVIDE_EXTERNAL.'
+  - name: mapping-update-omits-optional-options
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+      options:
+      - code: 130
+        data_hex: '0001c73d00'
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 0
+      options_absent:
+      - 130
+    description: 'RFC 6887 §14.2: non-mandatory options from the original request SHOULD NOT appear in the Mapping Update.'
+  - name: mapping-update-stops-after-refresh
+    protocol: pcp
+    families:
+    - ipv4
+    requires:
+    - wan-renumber
+    known_failure: miniupnpd does not implement PCP Mapping Update (RFC 6887 §14.2); after a WAN address change it only multicasts an ANNOUNCE.
+    request:
+      kind: wan_renumber
+      mapping:
+        version: 2
+        opcode: 1
+        lifetime: 3600
+        client: source
+        nonce_hex: '5a5a5a5a5a5a5a5a5a5a5a5a'
+        protocol_number: 17
+        internal_port: 40140
+        external_port: 0
+        external_address: '::'
+      refresh_after_ms: 100
+    expect:
+      kind: mapping_update
+      source_port: 5351
+      version: 2
+      opcode: 129
+      same_nonce: true
+      same_internal_port: true
+      destination: previous_response_source
+      result:
+      - 0
+      max_count: 1
+    description: 'RFC 6887 §14.2: once the client has refreshed the mapping, the server SHOULD stop retransmitting the update for it.'
 - title: 'RFC 6887 PCP: Options and extensions'
   description: Option parsing, duplicate handling, unknown options, and optional or
     mandatory extension behavior.

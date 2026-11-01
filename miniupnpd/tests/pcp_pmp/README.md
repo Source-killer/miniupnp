@@ -165,6 +165,17 @@ seconds; `startup-announce-retransmission` checks the repeat timing. Fixtures: `
 the default route, so this is where a daemon that never selects an output
 interface is caught; Linux picks the interface from the socket's source address.
 
+### Mapping Update cases (not yet runnable)
+
+Cases with `requires: [wan-renumber]` (`request: {kind: wan_renumber}`, `expect:
+{kind: mapping_update}`) cover RFC 6887 §14.2. A fixture would create the
+`mapping`, change the gateway's external address, and record the unicast MAP
+responses the client receives. No fixture implements this yet, so the runner
+reports these cases as `SKIP`; they carry a `known_failure` because miniupnpd
+only sends the multicast ANNOUNCE after an address change. When a fixture and
+the daemon support it, the runner must evaluate the `mapping_update`
+expectation (count, gap timing, echoed options, result code).
+
 ## Capture packets
 
 The Docker harness captures each selected case with `tcpdump`. Direct Python
