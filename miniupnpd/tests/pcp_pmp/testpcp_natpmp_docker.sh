@@ -14,6 +14,7 @@ KEEP_CONTAINER=${PCP_TEST_KEEP_CONTAINER:-0}
 CAPTURE=${PCP_TEST_CAPTURE:-1}
 CAPTURE_DIR=${PCP_TEST_CAPTURE_DIR:-"$REPO_ROOT/.tmp/packet-captures"}
 RESULTS_DIR=${PCP_TEST_RESULTS_DIR:-"$SCRIPT_DIR"}
+DATA_DIR=${PCP_TEST_DATA_DIR:-/tmp/miniupnp-tests}
 CAPTURE_TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S.%N)
 
 if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then
@@ -49,7 +50,7 @@ case "$WAN_PEER" in
 0|1) ;;
 *) echo "PCP_TEST_WAN_PEER must be 0 or 1." >&2; exit 2 ;;
 esac
-mkdir -p "$RESULTS_DIR"
+mkdir -p "$RESULTS_DIR" "$DATA_DIR"
 if [ "$CAPTURE" = 1 ]; then
 	mkdir -p "$CAPTURE_DIR"
 fi
@@ -139,7 +140,8 @@ run_tests() {
 	test_family=$1
 	shift
 	set -- --host pcp-router --port 5351 --family "$test_family" --platform linux \
-		--status-file /pcp-pmp-results/status.md "$@"
+		--status-file /pcp-pmp-results/status.md \
+		--status-data-file /pcp-pmp-data/status-data.json "$@"
 	if [ "$test_family" = ipv6 ]; then
 		set -- --protocol pcp --allow-empty-selection "$@"
 	else
@@ -163,6 +165,7 @@ run_tests() {
 	fi
 	set -- --volume "$SCRIPT_DIR:/pcp-pmp-tests:rw" \
 		--volume "$RESULTS_DIR:/pcp-pmp-results:rw" \
+		--volume "$DATA_DIR:/pcp-pmp-data:rw" \
 		--env PYTHONDONTWRITEBYTECODE=1 "$@"
 	if [ "$CAPTURE" = 1 ]; then
 		set -- --cap-add NET_RAW \
@@ -178,12 +181,16 @@ run_tests ipv6 "$@" || test_status=1
 
 # The containers write their results as root; give the files back to the caller
 # so the host-side runner below can update them.
-for owned in status.md status-data.json results-ipv4.json results-ipv6.json; do
+for owned in status.md results-ipv4.json results-ipv6.json; do
 	if [ -e "$RESULTS_DIR/$owned" ]; then
 		"$DOCKER_BIN" run --rm --volume "$RESULTS_DIR:/pcp-pmp-results:rw" \
 			--entrypoint chown "$IMAGE" "$(id -u):$(id -g)" "/pcp-pmp-results/$owned" || true
 	fi
 done
+if [ -e "$DATA_DIR/status-data.json" ]; then
+	"$DOCKER_BIN" run --rm --volume "$DATA_DIR:/pcp-pmp-data:rw" \
+		--entrypoint chown "$IMAGE" "$(id -u):$(id -g)" /pcp-pmp-data/status-data.json || true
+fi
 
 # Cases that need to restart the daemon (the startup ANNOUNCE) run on the host:
 # the fixture starts its own router containers with Docker.  Remove ours first so
@@ -216,7 +223,8 @@ elif [ "${PCP_TEST_RESTART_CASES:-1}" = 1 ]; then
 		PCP_TEST_IMAGE=$IMAGE DOCKER=$DOCKER_BIN python3 "$SCRIPT_DIR/testpcp_natpmp.py" \
 			--fixture "$SCRIPT_DIR/fixtures/docker.sh" --fixture-only --protocol pcp \
 			--family "$restart_family" --platform linux --allow-empty-selection \
-			--status-file "$RESULTS_DIR/status.md" $selection || test_status=1
+			--status-file "$RESULTS_DIR/status.md" \
+			--status-data-file "$DATA_DIR/status-data.json" $selection || test_status=1
 	done
 fi
 exit "$test_status"

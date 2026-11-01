@@ -146,7 +146,7 @@ def write_status_report(path, args, sections, outcomes):
     platform = args.platform
     all_cases = [case for section in sections for case in section["cases"]]
     known = {f"{case['protocol']}/{case['name']}" for case in all_cases}
-    data_path = status_data_path(path)
+    data_path = getattr(args, "status_data_file", None) or status_data_path(path)
     data = load_status_data(data_path)
     entry = data["platforms"].setdefault(platform, {"results": {}})
     entry["updated"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
@@ -1147,6 +1147,9 @@ def main():
     parser.add_argument("--status-file",
                         default=os.path.join(os.path.dirname(__file__), "status.md"),
                         help="combined Markdown report path (default: status.md beside this script)")
+    parser.add_argument("--status-data-file", default=None,
+                        help="per-platform results behind the report (default: status-data.json "
+                             "beside the status file)")
     parser.add_argument("--platform", default="linux",
                         help="platform column this run fills in the status report (default: linux)")
     parser.add_argument("--results-file",

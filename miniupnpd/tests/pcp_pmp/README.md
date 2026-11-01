@@ -69,6 +69,7 @@ Environment variables:
 - `PCP_TEST_RESTART_CASES=0`: skip the `daemon-restart` cases (they run on the host and need PyYAML).
 - `PCP_TEST_RESULTS_DIR`: choose the directory for `status.md` and IPv4/IPv6 JSON results
   (default: this script's directory).
+- `PCP_TEST_DATA_DIR`: choose the directory for `status-data.json` (default: `/tmp/miniupnp-tests`)
 - `PCP_TEST_WAN_PEER=1`: enable the optional [WAN fixture](#run-with-wan-traffic).
 - `DOCKER`: choose the Docker executable (default: `docker`).
 
@@ -122,7 +123,7 @@ Report arguments:
 `status.md` holds one status column per platform, so a row reads, for example,
 `PASS | FAIL` for Linux and FreeBSD. Each run fills in only its own platform's
 column (`--platform`, default `linux`) and replaces only the cases and address
-family it exercised; the raw per-platform results live in `status-data.json`
+family it exercised; the raw per-platform results live in `status-data.json` (kept in `/tmp/miniupnp-tests/` by the Docker and FreeBSD wrappers; set `PCP_TEST_DATA_DIR` to change that, or pass `--status-data-file` to the runner)
 beside it. The Docker wrapper fills the `linux` column. The FreeBSD wrapper
 fills the `freebsd` column:
 

@@ -24,6 +24,8 @@
 #                              <repo>/.tmp/ci/out/freebsd/announce)
 #   PCP_TEST_RESULTS_DIR       where status.md is written (default: beside
 #                              this script)
+#   PCP_TEST_DATA_DIR          where status-data.json is kept (default:
+#                              /tmp/miniupnp-tests)
 #   PCP_TEST_KEEP_VM=1         leave the VM running and keep its work dir
 #
 # The first run boots the downloaded image once, installs gmake/pkgconf/rsync (and
@@ -237,8 +239,9 @@ fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 RESULTS_DIR=${PCP_TEST_RESULTS_DIR:-"$SCRIPT_DIR"}
+DATA_DIR=${PCP_TEST_DATA_DIR:-/tmp/miniupnp-tests}
 STATUS_FILE=$RESULTS_DIR/status.md
-DATA_FILE=$RESULTS_DIR/status-data.json
+DATA_FILE=$DATA_DIR/status-data.json
 $SSH "$PRIV rm -rf /tmp/pcp-results && $PRIV mkdir -p /tmp/pcp-results && $PRIV chmod 777 /tmp/pcp-results"
 if [ -f "$DATA_FILE" ]; then
 	$SSH "cat >/tmp/pcp-results/status-data.json" <"$DATA_FILE"
@@ -255,7 +258,7 @@ rm -f "$OUT_DIR/exit-status"
 mkdir -p "$OUT_DIR/results"
 $SSH "$PRIV tar -cf - -C /tmp/pcp-results ." 2>/dev/null | tar -xf - -C "$OUT_DIR/results" || true
 if [ -f "$OUT_DIR/results/status.md" ]; then
-	mkdir -p "$RESULTS_DIR"
+	mkdir -p "$RESULTS_DIR" "$DATA_DIR"
 	cp "$OUT_DIR/results/status.md" "$STATUS_FILE"
 	cp "$OUT_DIR/results/status-data.json" "$DATA_FILE"
 fi
