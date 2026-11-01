@@ -21,7 +21,6 @@ import sys
 import tempfile
 import threading
 import time
-import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +32,7 @@ for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pard
 import pcap_reader  # noqa: E402
 import pcp_corpus_expander  # noqa: E402
 import pcp_packet_encoding  # noqa: E402
+import traffic_agent  # noqa: E402
 
 TIMEOUT = 2.0
 
@@ -659,13 +659,9 @@ def run_traffic_probe(sock, address, spec, variables, peer_url):
 
         worker = threading.Thread(target=echo, daemon=True)
         worker.start()
-        query = json.dumps({"protocol": spec["transport"], "host": spec["external_address"],
-                            "port": spec["external_port"], "token_hex": token.hex()}).encode()
         try:
-            request = urllib.request.Request(peer_url + "/probe", data=query,
-                                             headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(request, timeout=3) as result:
-                outcome = json.load(result)
+            outcome = traffic_agent.request_probe(peer_url, spec["transport"], spec["external_address"],
+                                                  spec["external_port"], token.hex())
         finally:
             worker.join(timeout=1.5)
     expected = spec["expect"] == "delivered"

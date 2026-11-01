@@ -19,6 +19,7 @@ import select
 import socket
 import subprocess
 import threading
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SOURCE_PORTS = itertools.count(40000)
@@ -128,6 +129,20 @@ def probe(spec, source4='0.0.0.0', source6='::'):
             return {'delivered': received == token}
         except OSError as error:
             return {'delivered': False, 'error': str(error)}
+
+
+def request_probe(agent_url, protocol, host, port, token_hex, source_port=None, timeout=None,
+                  http_timeout=3):
+    """Ask the agent at `agent_url` to send `token_hex` to host:port and return its outcome dict."""
+    spec = {"protocol": protocol, "host": host, "port": port, "token_hex": token_hex}
+    if timeout is not None:
+        spec["timeout"] = timeout
+    if source_port is not None:
+        spec["source_port"] = source_port
+    request = urllib.request.Request(agent_url.rstrip("/") + "/probe", data=json.dumps(spec).encode(),
+                                     headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=http_timeout) as response:
+        return json.load(response)
 
 
 def create_server(host='127.0.0.1', port=18080, source4='0.0.0.0', source6='::'):

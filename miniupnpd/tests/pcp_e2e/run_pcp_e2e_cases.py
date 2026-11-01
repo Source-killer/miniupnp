@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 from datetime import datetime, timezone
 
 for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "common"),
@@ -21,6 +20,7 @@ for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pard
 
 import pcp_corpus_expander  # noqa: E402
 import pcp_packet_encoding  # noqa: E402
+import traffic_agent  # noqa: E402
 
 try:
     import yaml
@@ -336,16 +336,9 @@ def self_test(corpus):
 
 
 def probe(agent, host, port, transport, expect, source_port=None):
-    data = {"protocol": transport, "host": host, "port": port,
-            "token_hex": os.urandom(16).hex(), "timeout": TIMEOUT}
-    if source_port is not None:
-        data["source_port"] = source_port
-    request = urllib.request.Request(agent.rstrip("/") + "/probe", data=json.dumps(data).encode(),
-                                     headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=3) as response:
-        outcome = json.load(response)
-    delivered = outcome["delivered"]
-    if delivered != (expect == "delivered"):
+    outcome = traffic_agent.request_probe(agent, transport, host, port, os.urandom(16).hex(),
+                                          source_port=source_port, timeout=TIMEOUT)
+    if outcome["delivered"] != (expect == "delivered"):
         raise AssertionError(f"{transport} {host}:{port}: expected {expect}; got {outcome}")
 
 
@@ -539,6 +532,8 @@ def run_case(case, args, agents, pcp_sock):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", default=os.path.join(os.path.dirname(__file__), "pcp-e2e-cases.yaml"))
+    parser.add_argument("--list-cases", action="store_true",
+                        help="print section, case and nat66 flag of every case that runs on --family, then exit")
     parser.add_argument("--self-test", action="store_true",
                         help="validate YAML cases and PCP/NAT-PMP encoding without a daemon")
     parser.add_argument("--router", default="172.28.41.1")
@@ -557,6 +552,12 @@ def main():
         args.external_address = "2001:db8:9000::1"
     with open(args.cases, encoding="utf-8") as source:
         corpus = pcp_corpus_expander.expand_e2e_corpus(yaml.safe_load(source))
+    if args.list_cases:
+        for section in corpus["sections"]:
+            for case in section["cases"]:
+                if args.family in case.get("families", ["ipv4", "ipv6"]):
+                    print(f'{section["name"]}\t{case["name"]}\t{str(section.get("nat66", False)).lower()}')
+        return 0
     if args.self_test:
         self_test(corpus)
         return 0

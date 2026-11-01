@@ -18,21 +18,11 @@ ARTIFACTS=${PCP_E2E_ARTIFACT_DIR:-$ROOT/.tmp/pcp-e2e}
 STATUS_FILE=${PCP_E2E_STATUS_FILE:-$DIR/status.md}
 RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 case "$ARTIFACTS" in /*) ;; *) ARTIFACTS=$ROOT/$ARTIFACTS ;; esac
-SELECTED_CASES=
 STATUS=0
 EXECUTED=0
 
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --case)
-      [ "$#" -ge 2 ] || { echo "--case requires a name" >&2; exit 2; }
-      case "$2" in *[!A-Za-z0-9_.-]*|'') echo "invalid case name: $2" >&2; exit 2 ;; esac
-      SELECTED_CASES="$SELECTED_CASES $2"
-      shift 2
-      ;;
-    *) echo "unsupported option: $1 (only --case NAME is accepted)" >&2; exit 2 ;;
-  esac
-done
+. "$ROOT/miniupnpd/tests/common/pcp_e2e_lib.sh"
+e2e_parse_args "$@"
 
 RUN_DIR=$ARTIFACTS/$RUN_ID
 mkdir -p "$RUN_DIR"
@@ -234,15 +224,12 @@ run_family() {
 
   family_dir=$RUN_DIR/$family
   mkdir -p "$family_dir"
-  case_rows=$($DOCKER run --rm --volume "$DIR:/pcp-e2e:ro" --entrypoint python3 "$IMAGE" -c \
-    'import sys,yaml; d=yaml.safe_load(open("/pcp-e2e/pcp-e2e-cases.yaml")); f=sys.argv[1]; print("\n".join(s["name"]+"\t"+c["name"]+"\t"+str(s.get("nat66",False)).lower() for s in d["sections"] for c in s["cases"] if f in c.get("families",["ipv4","ipv6"])))' "$family")
+  case_rows=$(e2e_case_rows "$family")
   active_section=
   active_section_nat66=0
   while IFS="$(printf '\t')" read -r section_name case_name section_nat66; do
     [ -n "$case_name" ] || continue
-    if [ -n "$SELECTED_CASES" ]; then
-      case " $SELECTED_CASES " in *" $case_name "*) ;; *) continue ;; esac
-    fi
+    e2e_case_selected "$case_name" || continue
     if [ "$section_name" != "$active_section" ]; then
       if [ "$active_section_nat66" = 1 ]; then
         set_nat66 0
@@ -269,48 +256,12 @@ run_family() {
     mkdir -p "$case_dir"
     snapshot_daemon_state "$case_dir/daemon-before.txt"
     start_packet_capture "/pcp-e2e-artifacts/$family/$section_name/$case_name/packet-capture.pcap"
-    "$DOCKER" run -d --name "$RUNNER" --network "$LAN" "$ip_flag" "$lanip" \
-      --cap-add NET_ADMIN --entrypoint sh \
-      --volume "$DIR:/pcp-e2e:ro" --volume "$ROOT/miniupnpd/tests/common:/pcp-common:ro" \
-      --volume "$RUN_DIR:/pcp-e2e-artifacts" \
-      "$IMAGE" -c 'if [ "$1" = add ]; then ip -6 address replace fd42:1::2/64 dev eth0 nodad; fi; shift; exec python3 "$@"' \
-      pcp-e2e-runner "$runner_ula" /pcp-e2e/run_pcp_e2e_cases.py \
-      --route-through-router --family "$family" --case "$case_name" \
-      --router "$case_router" --client-address "$case_client" --external-address "$external" \
-      --agent "allowed-peer=$allow_url" --agent "denied-peer=$deny_url" \
-      --agent "third-peer=$third_url" \
-      --peer-address "allowed-peer=$allow_ip" --peer-address "denied-peer=$deny_ip" \
-      --peer-address "third-peer=$third_ip" \
-      --snapshot-gate-prefix "/pcp-e2e-artifacts/$family/$section_name/$case_name/daemon-expect" >/dev/null
-    while [ "$("$DOCKER" inspect -f '{{.State.Running}}' "$RUNNER" 2>/dev/null || echo false)" = true ]; do
-      marker_found=0
-      for marker in "$case_dir/daemon-expect-"*.ready; do
-        [ -f "$marker" ] || continue
-        request_number=${marker##*-}
-        request_number=${request_number%.ready}
-        snapshot_daemon_state "$case_dir/daemon-expect-$request_number.txt"
-        rm -f "$marker"
-        marker_found=1
-      done
-      [ "$marker_found" = 1 ] || sleep 0.05
-    done
-    runner_exit=$("$DOCKER" wait "$RUNNER")
-    "$DOCKER" logs "$RUNNER" > "$case_dir/runner.log" 2>&1 || true
-    "$DOCKER" rm "$RUNNER" >/dev/null
-    if [ "$runner_exit" = 0 ]; then
-      sed '/^Summary: /d' "$case_dir/runner.log"
-      case_result=PASS
-      case_note="all configured assertions passed"
-    else
-      sed '/^Summary: /d' "$case_dir/runner.log"
-      STATUS=1
-      case_result=FAIL
-      case_note=$(sed -n 's/^FAIL [^:]*: //p' "$case_dir/runner.log" | head -n 1)
-    fi
+    e2e_start_runner
+    e2e_wait_runner
     stop_packet_capture "/pcp-e2e-artifacts/$family/$section_name/$case_name/packet-capture.pcap"
     snapshot_daemon_state "$case_dir/daemon-after.txt"
     case_artifacts="$family/$section_name/$case_name/packet-capture.pcap; $family/$section_name/$case_name/packet-capture.pcap.log; $family/$section_name/$case_name/daemon-before.txt; $family/$section_name/$case_name/daemon-expect-*.txt; $family/$section_name/$case_name/daemon-after.txt; $family/$section_name/$case_name/runner.log; $family/$section_name/$case_name/daemon.log"
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$family" "$section_name" "$case_name" "$case_result" "$case_note" "$case_artifacts" >> "$RESULTS_FILE"
+    e2e_record_result "$case_artifacts"
     "$DOCKER" logs --timestamps --since "$case_start" "$ROUTER" \
       > "$case_dir/daemon.log" 2>&1 || true
   done <<EOF
@@ -323,43 +274,8 @@ EOF
 
 run_family ipv4
 run_family ipv6
-if [ "$EXECUTED" -eq 0 ]; then
-  echo "No E2E cases matched the requested selection." >&2
-  STATUS=1
-fi
 "$DOCKER" logs --timestamps "$ROUTER" > "$RUN_DIR/daemon-final.log" 2>&1 || true
-PASS_TOTAL=$(awk -F '\t' '$4 == "PASS" { n++ } END { print n+0 }' "$RESULTS_FILE")
-FAIL_TOTAL=$(awk -F '\t' '$4 == "FAIL" { n++ } END { print n+0 }' "$RESULTS_FILE")
-RESULT_TOTAL=$(awk -F '\t' 'NF >= 4 { n++ } END { print n+0 }' "$RESULTS_FILE")
-SCENARIO_SELECTION=${SELECTED_CASES# }
-[ -n "$SCENARIO_SELECTION" ] || SCENARIO_SELECTION=all
-RUN_DIR_DISPLAY=${RUN_DIR#"$ROOT"/}
-mkdir -p "$(dirname -- "$STATUS_FILE")"
-{
-  cat <<EOF
-# PCP E2E Status
-
-Updated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-## Run
-
-- Branch: $(git -C "$ROOT" branch --show-current 2>/dev/null || echo unknown)
-- Address families: IPv4 and IPv6
-- Scenario selection: $SCENARIO_SELECTION
-- Totals: **$PASS_TOTAL PASS**, **$FAIL_TOTAL FAIL** ($RESULT_TOTAL family runs)
-- Artifacts: $RUN_DIR_DISPLAY (daemon startup/final logs and per-case captures/snapshots)
-
-## Results
-EOF
-  for family in ipv4 ipv6; do
-    printf '\n### %s\n' "$family"
-    for section in MAP FILTER PEER NAT PMP; do
-      printf '\n#### %s\n\n| Case | Status | Result / note |\n|---|---|---|\n' "$section"
-      awk -F '\t' -v family="$family" -v section="$section" '$1==family && $2==section { note=$5; gsub(/\|/, "\\|", note); printf "| %s | %s | %s |\n", $3, $4, note }' "$RESULTS_FILE"
-    done
-  done
-} > "$STATUS_FILE"
-echo "Status report: $STATUS_FILE"
+e2e_write_status "PCP E2E Status" "Address families: IPv4 and IPv6" \
+  "${RUN_DIR#"$ROOT"/} (daemon startup/final logs and per-case captures/snapshots)"
 echo "Daemon logs: $RUN_DIR (startup, per-case snapshots, final)"
-echo "Summary: $PASS_TOTAL passed, $FAIL_TOTAL failed ($RESULT_TOTAL family runs)"
 exit "$STATUS"
