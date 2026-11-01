@@ -1,14 +1,17 @@
 #!/bin/sh
-# FreeBSD counterpart of testpcp_announce_linux.sh.
+# FreeBSD counterpart of testpcp_natpmp_docker.sh for the cases that restart
+# the daemon (the YAML cases marked "requires: daemon-restart").
 #
 # On Linux the kernel chooses the multicast output interface from the socket's
 # bound source address, which hides a daemon that never selects one.  FreeBSD
 # routes by the default route, so an unscoped ANNOUNCE leaks out of the WAN.
-# This boots a throwaway FreeBSD VM (QEMU), copies the checkout into it and
-# runs freebsd/check-announce.sh there.
+# This boots a throwaway FreeBSD VM (QEMU), copies the checkout into it, builds
+# the daemon on an epair(4) router topology (freebsd/setup.sh) and runs the
+# YAML runner on the host with fixtures/freebsd.sh as its fixture.  The runner
+# fills the FreeBSD column of the combined status.md.
 #
-# Requires: qemu-system-x86_64, qemu-img, xz, curl, ssh, xorriso (or
-# genisoimage/mkisofs).  KVM is used when /dev/kvm is usable.
+# Requires: qemu-system-x86_64, qemu-img, xz, curl, ssh, python3 with PyYAML,
+# xorriso (or genisoimage/mkisofs).  KVM is used when /dev/kvm is usable.
 #
 # Environment:
 #   PCP_TEST_FREEBSD_VERSION   FreeBSD release (default: newest release that
@@ -16,9 +19,11 @@
 #   PCP_TEST_FREEBSD_CACHE     image cache dir (default: ~/.cache/miniupnpd-pcp-test)
 #   PCP_TEST_FREEBSD_MEMORY    VM memory in MB (default: 2048)
 #   PCP_TEST_FREEBSD_SSH_PORT  host port forwarded to the VM (default: 2222)
-#   PCP_TEST_OUT_DIR           where check.log, summary.txt, console.log and the
-#                              VM's announce-test/ logs are saved (default:
+#   PCP_TEST_OUT_DIR           where run.log, summary.txt, console.log, status.md
+#                              and the captures are saved (default:
 #                              <repo>/.tmp/ci/out/freebsd/announce)
+#   PCP_TEST_RESULTS_DIR       where status.md is written (default: beside
+#                              this script)
 #   PCP_TEST_KEEP_VM=1         leave the VM running and keep its work dir
 #
 # The first run boots the downloaded image once, installs gmake/pkgconf/rsync (and
@@ -39,10 +44,14 @@ OUT_DIR=${PCP_TEST_OUT_DIR:-"$REPO_ROOT/.tmp/ci/out/freebsd/announce"}
 
 for tool in qemu-system-x86_64 qemu-img xz curl ssh ssh-keygen tar; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
-		echo "$tool is required for the FreeBSD announce test." >&2
+		echo "$tool is required for the FreeBSD PCP test." >&2
 		exit 2
 	fi
 done
+if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+	echo "python3 with PyYAML is required to run the YAML cases." >&2
+	exit 2
+fi
 if command -v xorriso >/dev/null 2>&1; then
 	mkseed() { xorriso -as mkisofs -quiet -output "$1" -volid cidata -joliet -rock "$2" >/dev/null 2>&1; }
 elif command -v genisoimage >/dev/null 2>&1; then
@@ -189,26 +198,13 @@ boot_vm() {
 	fi
 }
 
-PREPARED="$CACHE/prepared-$VERSION.qcow2"
+PREPARE_ID=$( (sha256sum "$SCRIPT_DIR/freebsd/prepare.sh" 2>/dev/null || shasum -a 256 "$SCRIPT_DIR/freebsd/prepare.sh") | cut -c1-8)
+PREPARED="$CACHE/prepared-$VERSION-$PREPARE_ID.qcow2"
 if [ ! -f "$PREPARED" ]; then
 	echo "Preparing a cached FreeBSD $VERSION image (first run only)"
 	qemu-img create -q -f qcow2 -F qcow2 -b "$CACHE/$IMAGE_NAME" "$WORK/prep.qcow2" 10G
 	boot_vm "$WORK/prep.qcow2"
-	$SSH "yes | $PRIV env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg install -y gmake pkgconf rsync" >/dev/null
-	# libpfctl is a private base library: FreeBSD 15 ships neither its header
-	# nor an installable library, so build a static copy from the matching
-	# release branch (configure uses -I/usr/local/include -L/usr/local/lib).
-	if [ "${VERSION%%.*}" -ge 15 ]; then
-		$SSH "set -e
-		    rel=\$(freebsd-version -u | sed 's/-.*//')
-		    url=https://raw.githubusercontent.com/freebsd/freebsd-src/releng/\$rel/lib/libpfctl
-		    cd /tmp && fetch -q \$url/libpfctl.h \$url/libpfctl.c
-		    cc -O2 -I. -c libpfctl.c -o libpfctl.o
-		    ar rcs libpfctl.a libpfctl.o
-		    $PRIV mkdir -p /usr/local/include /usr/local/lib
-		    $PRIV install -m 644 libpfctl.h /usr/local/include/
-		    $PRIV install -m 644 libpfctl.a /usr/local/lib/"
-	fi
+	$SSH "$PRIV env PCP_TEST_PYTHON=1 sh -c \"\$(cat)\"" <"$SCRIPT_DIR/freebsd/prepare.sh"
 	$SSH "$PRIV sync; $PRIV shutdown -p now" || true
 	wait "$QEMU_PID" || true
 	QEMU_PID=
@@ -234,20 +230,37 @@ else
 		$SSH "$PRIV rm -rf /root/miniupnp && $PRIV mkdir -p /root/miniupnp && $PRIV tar -xf - -C /root/miniupnp"
 fi
 
-# Run the check, keeping its output; the exit code goes through a file because
-# a pipeline through tee would hide it.
+# Everything else runs inside the VM (freebsd/ci.sh): build the daemon on the
+# epair router, run the whole YAML suite from a client jail, then the cases that
+# restart the daemon.  The existing status data is copied in first so the
+# FreeBSD column merges into the shared status.md.
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
+RESULTS_DIR=${PCP_TEST_RESULTS_DIR:-"$SCRIPT_DIR"}
+STATUS_FILE=$RESULTS_DIR/status.md
+DATA_FILE=$RESULTS_DIR/status-data.json
+$SSH "$PRIV rm -rf /tmp/pcp-results && $PRIV mkdir -p /tmp/pcp-results && $PRIV chmod 777 /tmp/pcp-results"
+if [ -f "$DATA_FILE" ]; then
+	$SSH "cat >/tmp/pcp-results/status-data.json" <"$DATA_FILE"
+fi
 {
 	rc=0
-	$SSH "cd /root/miniupnp && $PRIV sh miniupnpd/tests/pcp_pmp/freebsd/check-announce.sh" 2>&1 || rc=$?
+	$SSH "cd /root/miniupnp && $PRIV sh miniupnpd/tests/pcp_pmp/freebsd/ci.sh /root/miniupnp /tmp/pcp-results" 2>&1 || rc=$?
 	echo $rc >"$OUT_DIR/exit-status"
-} | tee "$OUT_DIR/check.log"
+} | tee "$OUT_DIR/run.log"
 status=$(cat "$OUT_DIR/exit-status")
 rm -f "$OUT_DIR/exit-status"
 
-# Collect the in-VM logs (build, miniupnpd, tcpdump captures, configs).
-$SSH "$PRIV tar -cf - -C /tmp announce-test" 2>/dev/null | tar -xf - -C "$OUT_DIR" || true
+# Bring the results back: the merged status report and data, logs, captures.
+mkdir -p "$OUT_DIR/results"
+$SSH "$PRIV tar -cf - -C /tmp/pcp-results ." 2>/dev/null | tar -xf - -C "$OUT_DIR/results" || true
+if [ -f "$OUT_DIR/results/status.md" ]; then
+	mkdir -p "$RESULTS_DIR"
+	cp "$OUT_DIR/results/status.md" "$STATUS_FILE"
+	cp "$OUT_DIR/results/status-data.json" "$DATA_FILE"
+fi
+# Collect the VM-side logs and the status report next to the captures.
+$SSH "$PRIV tar -cf - -C /tmp pcp-fixture" 2>/dev/null | tar -xf - -C "$OUT_DIR" || true
 cp "$WORK/console.log" "$OUT_DIR/console.log" 2>/dev/null || true
 echo "FreeBSD $VERSION, exit status $status" >"$OUT_DIR/summary.txt"
 echo "Results saved to $OUT_DIR" >&2

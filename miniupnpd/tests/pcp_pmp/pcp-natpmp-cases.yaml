@@ -360,6 +360,39 @@ sections:
       - 3
     description: Send PCP over IPv6 using the actual IPv6 source address in the client
       field.
+- title: 'RFC 6887 PCP: Unsolicited ANNOUNCE'
+  description: Multicast restart announcements sent by the gateway on its own, which a request/response case cannot
+    observe. The fixture restarts the daemon from a cold start and records outgoing traffic on every LAN and WAN
+    interface.
+  cases:
+  # RFC 6887 §14.1.3: a restarting server sends a gratuitous ANNOUNCE "via paths over which it accepts PCP
+  # requests" to 224.0.0.1:5350 and/or [ff02::1]:5350. Reading that as the LAN interfaces, the external
+  # interface must stay silent (project expectation: a WAN announce leaks the gateway's restart upstream).
+  - name: startup-announce-lan-only
+    protocol: pcp
+    families:
+    - ipv4
+    - ipv6
+    requires:
+    - daemon-restart
+    request:
+      kind: daemon_restart
+    expect:
+      kind: unsolicited_announce
+      source_port: 5351
+      destination_port: 5350
+      destinations:
+        ipv4: 224.0.0.1
+        ipv6: ff02::1
+      length: 24
+      version: 2
+      opcode: 128
+      result:
+      - 0
+      lan: every
+      wan: none
+    description: After a daemon restart, send the multicast PCP ANNOUNCE on every LAN interface and never on the
+      external interface.
 - title: 'RFC 6887 PCP: Options and extensions'
   description: Option parsing, duplicate handling, unknown options, and optional or
     mandatory extension behavior.
@@ -1211,6 +1244,8 @@ sections:
     # RFC 6887 §§11.2–11.3: refresh an existing mapping using its original nonce.
     # RFC 6887 §11.2 (PEER mapping lifecycle).
   - name: peer-v2-lifecycle
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1555,6 +1590,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-24
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1583,6 +1620,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-36
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1611,6 +1650,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-40
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1639,6 +1680,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-60
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1667,6 +1710,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-64
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1695,6 +1740,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-68
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1723,6 +1770,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-72
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -1751,6 +1800,8 @@ sections:
     description: 'RFC 6887 §§8.2, 11.1, 12.1: reject an incomplete opcode body; preserve the opcode in the padded
       error response.'
   - name: peer-body-truncated-76
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -3517,6 +3568,8 @@ sections:
       - 0
     description: 'RFC 6887 §11.1: ignore MAP reserved bytes on reception, but clear them in responses.'
   - name: peer-reserved-body-ignored-and-cleared
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -3588,6 +3641,8 @@ sections:
       - 0
     description: 'RFC 6887 §12.1: ignore PEER reserved fields in requests and transmit zeros in responses.'
   - name: peer-prefer-failure-forbidden
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4
@@ -3930,6 +3985,8 @@ sections:
     description: 'RFC 6887 §11.3: external UDP ports 5350 and 5351 cannot be mapped to clients; with PREFER_FAILURE
       return CANNOT_PROVIDE_EXTERNAL.'
   - name: peer-wrong-nonce-refresh
+    requires:
+    - pcp-peer
     protocol: pcp
     families:
     - ipv4

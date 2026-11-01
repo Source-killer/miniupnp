@@ -69,6 +69,11 @@ jobs:
             candidate/miniupnpd/tests/pcp_pmp/testpcp_natpmp.py --self-test
           python3 candidate/miniupnpd/tests/common/traffic_agent.py --self-test
           sh -n candidate/miniupnpd/tests/pcp_pmp/testpcp_natpmp_docker.sh
+          for script in testpcp_natpmp_freebsd.sh fixtures/docker.sh \
+              fixtures/freebsd.sh freebsd/prepare.sh freebsd/setup.sh \
+              freebsd/daemon-restart.sh freebsd/ci.sh; do
+            sh -n "candidate/miniupnpd/tests/pcp_pmp/$script"
+          done
 
       - name: Compare master with pull request (no packet capture)
         env:
@@ -102,5 +107,72 @@ jobs:
         with:
           name: pcp-natpmp-${{ github.run_id }}-${{ github.run_attempt }}
           path: pcp-natpmp-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  freebsd:
+    # FreeBSD routes unscoped multicast by the default route, so an ANNOUNCE
+    # that never selects an output interface leaks out of the WAN there but not
+    # on Linux.  Run the YAML cases that restart the daemon in a FreeBSD VM.
+    name: FreeBSD ${{ matrix.release }} (daemon-restart cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ['14.5', '15.1']
+    steps:
+      - name: Check out pull request head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Check out master baseline
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || 'master' }}
+          path: master
+          persist-credentials: false
+
+      - name: Run the cases in FreeBSD ${{ matrix.release }}
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.release }}
+          cache-after-prepare: true
+          # Cached image: packages only.  The repository is not needed here.
+          prepare: |
+            env IGNORE_OSVERSION=yes ASSUME_ALWAYS_YES=yes pkg install -y gmake pkgconf rsync python3
+          run: |
+            set -u
+            harness=$PWD/candidate/miniupnpd/tests/pcp_pmp
+            # Packages (idempotent), PyYAML for this python, libpfctl on 15+.
+            PCP_TEST_PYTHON=1 sh "$harness/freebsd/prepare.sh"
+            # Master's daemon with this pull request's harness: informational,
+            # it shows what the pull request changes.
+            sh "$harness/freebsd/ci.sh" "$PWD/master" "$PWD/freebsd-results/master" || true
+            # The pull request's daemon must pass.
+            sh "$harness/freebsd/ci.sh" "$PWD/candidate" "$PWD/freebsd-results/candidate"
+
+      - name: Publish FreeBSD summary
+        if: always()
+        run: |
+          for tree in master candidate; do
+            if [ -f "freebsd-results/$tree/status.md" ]; then
+              {
+                echo "## FreeBSD ${{ matrix.release }}: $tree daemon"
+                echo
+                cat "freebsd-results/$tree/status.md"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+
+      - name: Upload FreeBSD results and packet captures
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pcp-freebsd-${{ matrix.release }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: freebsd-results/
           if-no-files-found: warn
           retention-days: 14

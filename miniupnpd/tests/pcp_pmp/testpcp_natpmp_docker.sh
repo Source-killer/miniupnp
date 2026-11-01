@@ -138,10 +138,10 @@ fi
 run_tests() {
 	test_family=$1
 	shift
-	set -- --host pcp-router --port 5351 --family "$test_family" \
+	set -- --host pcp-router --port 5351 --family "$test_family" --platform linux \
 		--status-file /pcp-pmp-results/status.md "$@"
 	if [ "$test_family" = ipv6 ]; then
-		set -- --protocol pcp --allow-empty-selection --append-status "$@"
+		set -- --protocol pcp --allow-empty-selection "$@"
 	else
 		set -- --mutating "$@"
 	fi
@@ -175,4 +175,48 @@ run_tests() {
 test_status=0
 run_tests ipv4 "$@" || test_status=1
 run_tests ipv6 "$@" || test_status=1
+
+# The containers write their results as root; give the files back to the caller
+# so the host-side runner below can update them.
+for owned in status.md status-data.json results-ipv4.json results-ipv6.json; do
+	if [ -e "$RESULTS_DIR/$owned" ]; then
+		"$DOCKER_BIN" run --rm --volume "$RESULTS_DIR:/pcp-pmp-results:rw" \
+			--entrypoint chown "$IMAGE" "$(id -u):$(id -g)" "/pcp-pmp-results/$owned" || true
+	fi
+done
+
+# Cases that need to restart the daemon (the startup ANNOUNCE) run on the host:
+# the fixture starts its own router containers with Docker.  Remove ours first so
+# their networks cannot overlap with the fixture's.
+if [ "${PCP_TEST_RESTART_CASES:-1}" = 1 ] && [ "$KEEP_CONTAINER" = 1 ]; then
+	echo "Skipping the daemon-restart cases: PCP_TEST_KEEP_CONTAINER=1 keeps the networks they need." >&2
+elif [ "${PCP_TEST_RESTART_CASES:-1}" = 1 ]; then
+	if ! python3 -c 'import yaml' >/dev/null 2>&1; then
+		echo "PyYAML is required on the host for the daemon-restart cases;" >&2
+		echo "install python3-yaml or set PCP_TEST_RESTART_CASES=0 to skip them." >&2
+		exit 2
+	fi
+	"$DOCKER_BIN" rm -f "$CONTAINER" "$PEER_CONTAINER" >/dev/null 2>&1 || true
+	"$DOCKER_BIN" network rm "$WAN_NETWORK" >/dev/null 2>&1 || true
+	"$DOCKER_BIN" network rm "$NETWORK" >/dev/null 2>&1 || true
+	# Forward only the case and profile selection (their values are plain names).
+	selection=
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--case|--profile)
+			if [ "$#" -lt 2 ]; then break; fi
+			selection="$selection $1 $2"
+			shift
+			;;
+		esac
+		shift
+	done
+	for restart_family in ipv4 ipv6; do
+		# shellcheck disable=SC2086
+		PCP_TEST_IMAGE=$IMAGE DOCKER=$DOCKER_BIN python3 "$SCRIPT_DIR/testpcp_natpmp.py" \
+			--fixture "$SCRIPT_DIR/fixtures/docker.sh" --fixture-only --protocol pcp \
+			--family "$restart_family" --platform linux --allow-empty-selection \
+			--status-file "$RESULTS_DIR/status.md" $selection || test_status=1
+	done
+fi
 exit "$test_status"

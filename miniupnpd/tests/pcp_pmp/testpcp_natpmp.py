@@ -11,11 +11,14 @@ import ipaddress
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -114,66 +117,126 @@ def markdown_cell(value):
     return str(value).replace("|", "\\|").replace("\n", " ").strip()
 
 
-def write_status_report(path, args, sections, outcomes):
-    all_cases = [case for section in sections for case in section["cases"]
-                 if not is_filtered_skip(*outcomes[(case["protocol"], case["name"])])]
-    counts = {status: 0 for status in ("PASS", "XFAIL", "FAIL", "SKIP")}
-    for case in all_cases:
-        counts[outcomes[(case["protocol"], case["name"])][0]] += 1
+PLATFORM_ORDER = ("linux", "freebsd")
+STATUS_ORDER = ("PASS", "XFAIL", "FAIL", "SKIP")
 
+
+def status_data_path(path):
+    """Per-platform results behind the combined report: status.md -> status-data.json."""
+    return os.path.splitext(path)[0] + "-data.json"
+
+
+def load_status_data(path):
+    try:
+        with open(path, encoding="utf-8") as data_file:
+            data = json.load(data_file)
+        if data.get("version") == 1 and isinstance(data.get("platforms"), dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"version": 1, "platforms": {}}
+
+
+def write_status_report(path, args, sections, outcomes):
+    """Merge this run into the per-platform results and rewrite the combined report.
+
+    Every platform (Linux in Docker, FreeBSD in a VM, ...) fills its own column; a run
+    replaces only the cases and address family it actually exercised.
+    """
+    platform = args.platform
+    all_cases = [case for section in sections for case in section["cases"]]
+    known = {f"{case['protocol']}/{case['name']}" for case in all_cases}
+    data_path = status_data_path(path)
+    data = load_status_data(data_path)
+    entry = data["platforms"].setdefault(platform, {"results": {}})
+    entry["updated"] = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    entry.setdefault("runs", {})[args.family] = {
+        "target": f"{args.host}:{args.port}", "protocol": args.protocol,
+        "profile": getattr(args, "profile", "baseline"),
+        "mutating": bool(args.mutating),
+    }
+    results = entry["results"].setdefault(args.family, {})
+    for case in all_cases:
+        status, detail = outcomes[(case["protocol"], case["name"])]
+        key = f"{case['protocol']}/{case['name']}"
+        if is_filtered_skip(status, detail):
+            continue
+        # A run without the fixture must not wipe the result of one that had it.
+        if status == "SKIP" and detail.startswith("requires daemon-restart fixture") and key in results:
+            continue
+        results[key] = [status, detail]
+    for other in data["platforms"].values():  # forget cases that left the corpus
+        for family_results in other["results"].values():
+            for key in [key for key in family_results if key not in known]:
+                del family_results[key]
+
+    platforms = sorted(data["platforms"], key=lambda name: (
+        PLATFORM_ORDER.index(name) if name in PLATFORM_ORDER else len(PLATFORM_ORDER), name))
     lines = [
         "# PCP/NAT-PMP Test Status",
         "",
-        f"Updated: {datetime.now(timezone.utc).astimezone().isoformat(timespec='seconds')}",
+        "One column per platform; a run updates only its own platform's column "
+        "(raw results: `" + os.path.basename(data_path) + "`).",
         "",
-        "## Run",
-        "",
-        f"- Target: `{args.host}:{args.port}`",
-        f"- Protocol: `{args.protocol}`",
-        f"- Address family: `{args.family}`",
-        f"- Server profile: `{getattr(args, 'profile', 'baseline')}`",
-        f"- Mapping lifecycle tests: `{'enabled' if args.mutating else 'disabled'}`",
-        f"- Totals: **{counts['PASS']} PASS**, **{counts['XFAIL']} XFAIL**, "
-        f"**{counts['FAIL']} FAIL**, **{counts['SKIP']} SKIP**",
-        "",
-        "## Results by section",
+        "## Platforms",
         "",
     ]
+    for name in platforms:
+        counts = dict.fromkeys(STATUS_ORDER, 0)
+        for family_results in data["platforms"][name]["results"].values():
+            for status, _detail in family_results.values():
+                counts[status] += 1
+        runs = data["platforms"][name].get("runs", {})
+        lines.append(
+            f"- **{name}**: **{counts['PASS']} PASS**, **{counts['XFAIL']} XFAIL**, "
+            f"**{counts['FAIL']} FAIL**, **{counts['SKIP']} SKIP** "
+            f"(updated {data['platforms'][name]['updated']}; "
+            + "; ".join(f"{family}: `{run['target']}`, protocol `{run['protocol']}`, "
+                        f"profile `{run['profile']}`, lifecycle "
+                        f"{'on' if run['mutating'] else 'off'}" for family, run in sorted(runs.items()))
+            + ")")
     if args.capture_dir:
-        lines.insert(lines.index("## Results by section") - 1,
-                     f"- Capture directory: `{args.capture_dir}`")
+        lines.append(f"- Capture directory ({platform}, last run): `{args.capture_dir}`")
+    lines.extend(("", "## Results by section", ""))
+
+    def cell(name, family, key):
+        return data["platforms"][name]["results"].get(family, {}).get(key)
+
     for section in sections:
-        visible_cases = [case for case in section["cases"]
-                         if not is_filtered_skip(*outcomes[(case["protocol"], case["name"])])]
-        if not visible_cases:
+        rows = []
+        for case in section["cases"]:
+            key = f"{case['protocol']}/{case['name']}"
+            for family in case["families"]:
+                cells = {name: cell(name, family, key) for name in platforms}
+                if any(cells.values()):
+                    rows.append((case, family, key, cells))
+        if not rows:
             continue
         lines.extend((f"### {markdown_cell(section['title'])}", "",
                       markdown_cell(section["description"]), "",
-                      "| Case | Protocol | Status | Result / note |",
-                      "|---|---|---|---|") )
-        for case in visible_cases:
-            status, detail = outcomes[(case["protocol"], case["name"])]
+                      "| Case | Protocol | Family | " + " | ".join(platforms) + " | Result / note |",
+                      "|---|---|---|" + "---|" * len(platforms) + "---|"))
+        for case, family, _key, cells in rows:
+            notes = [f"{name}: {result[1]}" if len(platforms) > 1 else result[1]
+                     for name, result in cells.items() if result and result[1] and result[0] != "PASS"]
             lines.append("| " + " | ".join((
-                markdown_cell(case["name"]),
-                markdown_cell(case["protocol"]),
-                status,
-                markdown_cell(detail or case.get("description", "")),
+                markdown_cell(case["name"]), markdown_cell(case["protocol"]), family,
+                *(result[0] if result else "—" for result in cells.values()),
+                markdown_cell("; ".join(notes) or case.get("description", "")),
             )) + " |")
         lines.append("")
 
     directory = os.path.dirname(os.path.abspath(path))
     os.makedirs(directory, exist_ok=True)
-    append = getattr(args, "append_status", False)
-    mode = "a" if append else "w"
-    if append and os.path.exists(path) and os.path.getsize(path) > 0:
-        with open(path, "a", encoding="utf-8") as report:
-            report.write("\n\n---\n\n")
-    with open(path, mode, encoding="utf-8") as report:
+    with open(data_path, "w", encoding="utf-8") as data_file:
+        json.dump(data, data_file, indent=1, sort_keys=True)
+        data_file.write("\n")
+    with open(path, "w", encoding="utf-8") as report:
         report.write("\n".join(lines))
 
 
 def write_results(path, args, cases, outcomes, corpus_path):
-    """Machine-readable counterpart to status.md for branch comparisons."""
+    """Machine-readable counterpart to the status report for branch comparisons."""
     with open(corpus_path, "rb") as corpus_file:
         corpus_sha256 = hashlib.sha256(corpus_file.read()).hexdigest()
     results = {
@@ -682,9 +745,122 @@ def run_protocol_sequence(sock, address, case, peer_url=None):
                 pass
 
 
-def run_case(sock, address, case, mutating=False, peer_url=None):
+PCAP_MAGICS = {
+    b"\xd4\xc3\xb2\xa1": "<", b"\xa1\xb2\xc3\xd4": ">",   # microsecond
+    b"\x4d\x3c\xb2\xa1": "<", b"\xa1\xb2\x3c\x4d": ">",   # nanosecond
+}
+
+
+def read_pcap_frames(path):
+    """Return the Ethernet frames of a classic pcap file written by tcpdump -w."""
+    with open(path, "rb") as pcap:
+        data = pcap.read()
+    if len(data) < 24 or data[:4] not in PCAP_MAGICS:
+        raise AssertionError(f"{path}: not a classic pcap file")
+    endian = PCAP_MAGICS[data[:4]]
+    linktype = struct.unpack(endian + "I", data[20:24])[0]
+    if linktype != 1:
+        raise AssertionError(f"{path}: unsupported link type {linktype} (need Ethernet)")
+    frames, offset = [], 24
+    while offset + 16 <= len(data):
+        captured = struct.unpack(endian + "I", data[offset + 8:offset + 12])[0]
+        frames.append(data[offset + 16:offset + 16 + captured])
+        offset += 16 + captured
+    return frames
+
+
+def parse_udp_frame(frame):
+    """Return (source ip, destination ip, source port, destination port, payload) or None."""
+    if len(frame) < 14:
+        return None
+    ethertype, offset = struct.unpack("!H", frame[12:14])[0], 14
+    while ethertype in (0x8100, 0x88a8) and len(frame) >= offset + 4:  # VLAN tags
+        ethertype = struct.unpack("!H", frame[offset + 2:offset + 4])[0]
+        offset += 4
+    if ethertype == 0x0800 and len(frame) >= offset + 20:
+        header_length = (frame[offset] & 0x0f) * 4
+        if frame[offset + 9] != 17 or len(frame) < offset + header_length + 8:
+            return None
+        source = ipaddress.ip_address(frame[offset + 12:offset + 16])
+        destination = ipaddress.ip_address(frame[offset + 16:offset + 20])
+        udp = offset + header_length
+    elif ethertype == 0x86dd and len(frame) >= offset + 48:
+        if frame[offset + 6] != 17:  # extension headers are not expected here
+            return None
+        source = ipaddress.ip_address(frame[offset + 8:offset + 24])
+        destination = ipaddress.ip_address(frame[offset + 24:offset + 40])
+        udp = offset + 40
+    else:
+        return None
+    source_port, destination_port = struct.unpack("!HH", frame[udp:udp + 4])
+    return source, destination, source_port, destination_port, frame[udp + 8:]
+
+
+def matching_udp_packets(path, expect, family, check_payload):
+    """UDP packets in a capture that go to the expected multicast destination."""
+    destination = ipaddress.ip_address(expect["destinations"][family])
+    matches = []
+    for frame in read_pcap_frames(path):
+        packet = parse_udp_frame(frame)
+        if packet is None or packet[1] != destination or packet[3] != expect["destination_port"]:
+            continue
+        if check_payload:
+            payload = packet[4]
+            if (packet[2] != expect["source_port"] or len(payload) != expect["length"]
+                    or payload[0] != expect["version"] or payload[1] != expect["opcode"]
+                    or payload[3] not in expect["result"]):
+                continue
+        matches.append(packet)
+    return matches
+
+
+def run_daemon_restart(case, args):
+    """Cold-start the daemon through the fixture and check the unsolicited traffic it records."""
+    expect = case["expect"]
+    if expect["kind"] != "unsolicited_announce":
+        raise AssertionError("daemon_restart needs an unsolicited_announce expectation")
+    if not args.fixture:
+        raise AssertionError("daemon_restart requires --fixture")
+    if args.capture_dir:
+        directory = os.path.join(args.capture_dir, f"{args.family}-{case['protocol']}-{case['name']}")
+        os.makedirs(directory, exist_ok=True)
+        cleanup = None
+    else:
+        directory = cleanup = tempfile.mkdtemp(prefix="pcp-fixture-")
+    try:
+        # The fixture contract: restart the daemon from a cold start while recording its outgoing
+        # packets, then leave lan-N.pcap and wan-N.pcap (one per interface) in DIRECTORY.
+        result = subprocess.run(shlex.split(args.fixture) + ["daemon-restart", directory, args.family],
+                                capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            raise AssertionError("fixture daemon-restart failed: " + (result.stderr or result.stdout).strip())
+        lan = sorted(name for name in os.listdir(directory) if re.fullmatch(r"lan-\d+\.pcap", name))
+        wan = sorted(name for name in os.listdir(directory) if re.fullmatch(r"wan-\d+\.pcap", name))
+        if not lan or not wan:
+            raise AssertionError("fixture produced no LAN or WAN capture")
+        problems = []
+        if expect["lan"] == "every":
+            for name in lan:
+                if not matching_udp_packets(os.path.join(directory, name), expect, args.family, True):
+                    problems.append(f"no ANNOUNCE to {expect['destinations'][args.family]} on {name[:-5]}")
+        if expect["wan"] == "none":
+            for name in wan:
+                leaked = matching_udp_packets(os.path.join(directory, name), expect, args.family, False)
+                if leaked:
+                    problems.append(f"{len(leaked)} ANNOUNCE packet(s) to {expect['destinations'][args.family]} "
+                                    f"leaked on {name[:-5]}")
+        assert not problems, "; ".join(problems)
+    finally:
+        if cleanup:
+            shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def run_case(sock, address, case, mutating=False, peer_url=None, args=None):
     request_spec = case["request"]
     expect = case["expect"]
+    if request_spec["kind"] == "daemon_restart":
+        run_daemon_restart(case, args)
+        return
     if request_spec["kind"] == "pcp_auth_sequence":
         run_auth_sequence(sock, address, case)
         return
@@ -843,6 +1019,73 @@ def run_self_tests():
                               {"expect": "blocked", "external_port": 65536,
                                "skip_unrepresentable_port": True}, {}, None)
 
+        def test_unsolicited_announce_fixture(self):
+            payload = bytes([2, 128, 0, 0]) + bytes(20)
+            udp = struct.pack("!HHHH", 5351, 5350, 8 + len(payload), 0) + payload
+            ethernet = bytes(12)
+            ipv4 = (ethernet + b"\x08\x00" + bytes([0x45, 0, 0, 0, 0, 0, 0, 0, 1, 17, 0, 0])
+                    + bytes([192, 168, 1, 1]) + bytes([224, 0, 0, 1]) + udp)
+            ipv6 = (ethernet + b"\x86\xdd" + bytes([0x60, 0, 0, 0, 0, len(udp), 17, 1])
+                    + ipaddress.ip_address("fd42::1").packed + ipaddress.ip_address("ff02::1").packed + udp)
+
+            def pcap(*frames):
+                data = struct.pack("<IHHiIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
+                for frame in frames:
+                    data += struct.pack("<IIII", 0, 0, len(frame), len(frame)) + frame
+                return data
+
+            case = {"name": "x", "protocol": "pcp",
+                    "expect": {"kind": "unsolicited_announce", "source_port": 5351,
+                               "destination_port": 5350, "length": 24, "version": 2, "opcode": 128,
+                               "result": [0], "lan": "every", "wan": "none",
+                               "destinations": {"ipv4": "224.0.0.1", "ipv6": "ff02::1"}}}
+
+            def run(files, family):
+                def fake(command, **_kwargs):
+                    for name, data in files.items():
+                        with open(os.path.join(command[-2], name), "wb") as handle:
+                            handle.write(data)
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                args = type("Args", (), {"fixture": "fixture.sh", "capture_dir": None, "family": family})
+                with patch.object(runner.subprocess, "run", fake):
+                    run_daemon_restart(case, args)
+
+            both = {"lan-0.pcap": pcap(ipv4, ipv6), "lan-1.pcap": pcap(ipv4, ipv6), "wan-0.pcap": pcap()}
+            for family in ("ipv4", "ipv6"):
+                run(both, family)
+            with self.assertRaisesRegex(AssertionError, "no ANNOUNCE .* on lan-1"):
+                run({**both, "lan-1.pcap": pcap(ipv6)}, "ipv4")
+            with self.assertRaisesRegex(AssertionError, "leaked on wan-0"):
+                run({**both, "wan-0.pcap": pcap(ipv4)}, "ipv4")
+            run({**both, "wan-0.pcap": pcap(ipv6)}, "ipv4")  # other family is not this case's leak
+            with self.assertRaisesRegex(AssertionError, "no LAN or WAN capture"):
+                run({"wan-0.pcap": pcap()}, "ipv4")
+
+        def test_status_report_merges_platforms(self):
+            import tempfile
+            case = {"name": "startup", "protocol": "pcp", "families": ["ipv4"], "description": "d"}
+            other = {"name": "other", "protocol": "pcp", "families": ["ipv4"], "description": "o"}
+            sections = [{"title": "T", "description": "D", "cases": [case, other]}]
+
+            def report(platform, outcomes):
+                args = type("Args", (), {"platform": platform, "family": "ipv4", "host": "h", "port": 1,
+                                         "protocol": "pcp", "profile": "baseline", "mutating": True,
+                                         "capture_dir": None})
+                write_status_report(path, args, sections, outcomes)
+                with open(path, encoding="utf-8") as handle:
+                    return handle.read()
+
+            with tempfile.TemporaryDirectory() as directory:
+                path = os.path.join(directory, "status.md")
+                report("linux", {("pcp", "startup"): ("PASS", ""), ("pcp", "other"): ("PASS", "")})
+                text = report("freebsd", {("pcp", "startup"): ("FAIL", "leaked on wan-0"),
+                                          ("pcp", "other"): ("SKIP", "not selected for this invocation")})
+                self.assertIn("| startup | pcp | ipv4 | PASS | FAIL | freebsd: leaked on wan-0 |", text)
+                self.assertIn("| other | pcp | ipv4 | PASS | — |", text)
+                # A later Linux run replaces only Linux's column.
+                text = report("linux", {("pcp", "startup"): ("FAIL", "x"), ("pcp", "other"): ("PASS", "")})
+                self.assertIn("| startup | pcp | ipv4 | FAIL | FAIL | linux: x; freebsd: leaked on wan-0 |", text)
+
         def test_traffic_agent_integration(self):
             # Local sockets only; no daemon, Docker, or external network is used.
             common = str(Path(__file__).resolve().parents[1] / "common")
@@ -885,6 +1128,15 @@ def main():
     parser.add_argument("--profile", default="baseline",
                         help="explicit server fixture profile from YAML (default: baseline)")
     parser.add_argument("--peer-url", help="WAN traffic actor URL for cases requiring the wan-peer fixture")
+    parser.add_argument("--fixture", metavar="COMMAND",
+                        help="platform fixture command for cases requiring daemon-restart; it is run as "
+                             "COMMAND daemon-restart DIRECTORY FAMILY and must restart the daemon while "
+                             "recording lan-N.pcap and wan-N.pcap into DIRECTORY")
+    parser.add_argument("--unsupported", action="append", default=[], metavar="FEATURE",
+                        help="feature this platform's daemon lacks (for example pcp-peer, which needs the "
+                             "netfilter backend); cases requiring it are reported as SKIP. May be repeated")
+    parser.add_argument("--fixture-only", action="store_true",
+                        help="run only the cases that need a fixture this invocation provides")
     parser.add_argument("--case", action="append", help="run one named case; may be repeated")
     parser.add_argument("--allow-empty-selection", action="store_true",
                         help="write SKIP results if selection excludes this profile/family/protocol")
@@ -894,9 +1146,9 @@ def main():
                         help="skip mapping create/renew/delete cases")
     parser.add_argument("--status-file",
                         default=os.path.join(os.path.dirname(__file__), "status.md"),
-                        help="Markdown report path (default: status.md beside this script)")
-    parser.add_argument("--append-status", action="store_true",
-                        help="append this run to the status report instead of replacing it")
+                        help="combined Markdown report path (default: status.md beside this script)")
+    parser.add_argument("--platform", default="linux",
+                        help="platform column this run fills in the status report (default: linux)")
     parser.add_argument("--results-file",
                         help="JSON results path (default with captures: results-FAMILY.json in the run folder)")
     parser.add_argument("--capture-dir",
@@ -937,7 +1189,7 @@ def main():
         for case in section["cases"]:
             case["section"] = section["title"]
             cases.append(case)
-    request_kinds = {"raw", "pcp_header", "pcp_map", "pcp_peer", "pcp_auth", "pcp_auth_sequence", "natpmp", "lifecycle", "protocol_sequence"}
+    request_kinds = {"raw", "pcp_header", "pcp_map", "pcp_peer", "pcp_auth", "pcp_auth_sequence", "natpmp", "lifecycle", "protocol_sequence", "daemon_restart"}
     for case in cases:
         if not set(case.get("profiles", profiles)).issubset(profiles):
             parser.error(f"{case['name']}: unknown server profile")
@@ -945,7 +1197,7 @@ def main():
             parser.error("every YAML case needs name, protocol, families, request and expect")
         if case["request"].get("kind") not in request_kinds:
             parser.error(f"unsupported request kind in case {case['name']}")
-        if case["expect"].get("kind") not in {"response", "silence", "lifecycle", "auth_sequence"}:
+        if case["expect"].get("kind") not in {"response", "silence", "lifecycle", "auth_sequence", "unsolicited_announce"}:
             parser.error(f"unsupported expectation kind in case {case['name']}")
         if case["expect"]["kind"] == "response":
             required = {"version", "opcode", "result"}
@@ -968,7 +1220,7 @@ def main():
                 parser.error(f"{case['name']}: prerequisite {dependency} lacks a required family")
             if not set(case.get("profiles", profiles)).issubset(prerequisite.get("profiles", profiles)):
                 parser.error(f"{case['name']}: prerequisite {dependency} lacks a required profile")
-        if set(case.get("requires", [])) - {"wan-peer"}:
+        if set(case.get("requires", [])) - {"wan-peer", "daemon-restart", "pcp-peer"}:
             parser.error(f"{case['name']}: unknown required fixture")
         earlier_cases[f"{case['protocol']}/{case['name']}"] = case
     if args.family == "ipv6":
@@ -982,6 +1234,8 @@ def main():
         if args.protocol != "both" and case["protocol"] not in (args.protocol, "both"):
             continue
         if args.family not in case["families"]:
+            continue
+        if args.fixture_only and not (set(case.get("requires", [])) & {"daemon-restart"}):
             continue
         if args.case is None or case["name"] in args.case:
                 selected.append(case)
@@ -1025,6 +1279,17 @@ def main():
                     print(f"SKIP {protocol}/{case_name}: {reason}")
                     outcomes[(protocol, case_name)] = ("SKIP", reason)
                     continue
+                unsupported = [item for item in case.get("requires", []) if item in args.unsupported]
+                if unsupported:
+                    reason = f"requires {unsupported[0]}, unsupported on this platform"
+                    print(f"SKIP {protocol}/{case_name}: {reason}")
+                    outcomes[(protocol, case_name)] = ("SKIP", reason)
+                    continue
+                if "daemon-restart" in case.get("requires", []) and not args.fixture:
+                    reason = "requires daemon-restart fixture (--fixture)"
+                    print(f"SKIP {protocol}/{case_name}: {reason}")
+                    outcomes[(protocol, case_name)] = ("SKIP", reason)
+                    continue
                 blocked = []
                 for dependency in case.get("depends_on", []):
                     dep_protocol, dep_name = dependency.split("/", 1)
@@ -1039,7 +1304,7 @@ def main():
                 capture = start_packet_capture(args, case)
                 try:
                     try:
-                        run_case(sock, address, case, args.mutating, args.peer_url)
+                        run_case(sock, address, case, args.mutating, args.peer_url, args)
                     except (AssertionError, OSError) as error:
                         if case.get("known_failure"):
                             print(f"XFAIL {protocol}/{case_name}: {error} ({case['known_failure']})")

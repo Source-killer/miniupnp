@@ -46,9 +46,10 @@ From the repository root:
 The script builds a local image, starts an isolated dual-stack router, runs
 the IPv4 PCP/NAT-PMP and IPv6 PCP cases, then removes the container and network.
 Docker must be available to the current user. The container uses `NET_ADMIN`
-to set up its temporary nftables rules. Each run writes `status.md` in this
-directory with per-section PASS, XFAIL, FAIL, and SKIP tables for both address
-families.
+to set up its temporary nftables rules. Each run updates the Linux column of
+`status.md` in this directory (see [Platforms and the combined status
+report](#platforms-and-the-combined-status-report)) with per-section PASS,
+XFAIL, FAIL, and SKIP tables for both address families.
 
 Status totals and section tables omit cases excluded by protocol, address
 family or case selection. Sections with no remaining cases are hidden, so an
@@ -65,6 +66,7 @@ Environment variables:
 - `PCP_TEST_NETWORK`: override the LAN network name.
 - `PCP_TEST_CAPTURE=0`: disable packet capture (enabled by default).
 - `PCP_TEST_CAPTURE_DIR`: choose the host capture root (default: `.tmp/packet-captures/`).
+- `PCP_TEST_RESTART_CASES=0`: skip the `daemon-restart` cases (they run on the host and need PyYAML).
 - `PCP_TEST_RESULTS_DIR`: choose the directory for `status.md` and IPv4/IPv6 JSON results
   (default: this script's directory).
 - `PCP_TEST_WAN_PEER=1`: enable the optional [WAN fixture](#run-with-wan-traffic).
@@ -109,9 +111,56 @@ Target and case arguments:
 Report arguments:
 
 - `--status-file PATH`: Markdown report path (default: `status.md` beside the runner).
-- `--append-status`: append to the report instead of replacing it.
+- `--platform NAME`: the platform column this run fills in `status.md` (default: `linux`).
+- `--fixture COMMAND`: platform fixture for cases that need `daemon-restart`
+  (see below); `--fixture-only` runs just those cases.
 - `--results-file PATH`: request JSON results; with captures, the default is
   `results-FAMILY.json` in the run folder.
+
+## Platforms and the combined status report
+
+`status.md` holds one status column per platform, so a row reads, for example,
+`PASS | FAIL` for Linux and FreeBSD. Each run fills in only its own platform's
+column (`--platform`, default `linux`) and replaces only the cases and address
+family it exercised; the raw per-platform results live in `status-data.json`
+beside it. The Docker wrapper fills the `linux` column. The FreeBSD wrapper
+fills the `freebsd` column:
+
+```sh
+./miniupnpd/tests/pcp_pmp/testpcp_natpmp_freebsd.sh
+```
+
+It boots a throwaway FreeBSD VM under QEMU (KVM when available) and runs
+`freebsd/ci.sh` inside it: build miniupnpd with pf on an `epair(4)` router
+topology (a WAN and two LANs, default route out of the WAN), run the whole YAML
+suite from a client jail on LAN1, then the cases that restart the daemon. The
+client is a vnet jail because the daemon decides which LAN a request came from by
+routing to the sender; for the router's own address that route is `lo0`, so a
+runner on the router itself is ignored over IPv6. Requires `qemu-system-x86_64`,
+`qemu-img`, `xz`, `curl`, `ssh` and `xorriso`/`genisoimage`/`mkisofs` on the host;
+the header of the script lists its environment variables. The first run builds a
+cached VM image with the build tools, Python and PyYAML. Results, captures and
+logs go to `.tmp/ci/out/freebsd/announce/`, and the merged `status.md` is updated.
+
+Features a platform's daemon cannot offer are declared per run with
+`--unsupported FEATURE` and tagged in the YAML with `requires`; those cases are
+reported as SKIP. The FreeBSD run passes `--unsupported pcp-peer`: PCP PEER is
+only built with the netfilter backend.
+
+### Cases that restart the daemon
+
+Some behavior, such as the unsolicited multicast ANNOUNCE at startup, cannot be
+observed by a client talking to a running daemon. YAML cases with
+`requires: [daemon-restart]` and `request: {kind: daemon_restart}` run only when
+`--fixture COMMAND` is given. The runner calls
+`COMMAND daemon-restart DIRECTORY FAMILY`; the fixture must cold-start the
+daemon while recording its outgoing packets and leave one classic pcap per
+interface in `DIRECTORY`: `lan-N.pcap` for each LAN and `wan-N.pcap` for each
+external interface. The case's `unsolicited_announce` expectation is then
+checked by the runner. Fixtures: `fixtures/docker.sh` (Linux) and
+`fixtures/freebsd.sh` (the VM). On FreeBSD an unscoped multicast send follows
+the default route, so this is where a daemon that never selects an output
+interface is caught; Linux picks the interface from the socket's source address.
 
 ## Capture packets
 

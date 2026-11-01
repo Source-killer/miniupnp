@@ -37,7 +37,7 @@ def prepare_tree(source, destination, harness_source=HERE):
     harness = destination / HARNESS
     if harness.exists():
         shutil.rmtree(harness)
-    shutil.copytree(harness_source, harness, ignore=shutil.ignore_patterns('__pycache__', 'status.md'))
+    shutil.copytree(harness_source, harness, ignore=shutil.ignore_patterns('__pycache__', 'status.md', 'status-data.json'))
     common = destination / HARNESS.parent / 'common'
     if common.exists():
         shutil.rmtree(common)
@@ -229,7 +229,7 @@ def main():
     commits, runs, errors = {}, {}, []
     with tempfile.TemporaryDirectory(prefix='pcp-branch-comparison-') as temporary:
         harness_snapshot = Path(temporary) / 'harness'
-        shutil.copytree(HERE, harness_snapshot, ignore=shutil.ignore_patterns('__pycache__', 'status.md'))
+        shutil.copytree(HERE, harness_snapshot, ignore=shutil.ignore_patterns('__pycache__', 'status.md', 'status-data.json'))
         shutil.copytree(HERE.parent / 'common', Path(temporary) / 'common',
                         ignore=shutil.ignore_patterns('__pycache__'))
         corpus_digest = hashlib.sha256((harness_snapshot / 'pcp-natpmp-cases.yaml').read_bytes()).hexdigest()

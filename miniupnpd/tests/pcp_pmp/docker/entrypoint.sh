@@ -64,5 +64,13 @@ if [ "${PCP_TEST_REAL_WAN:-0}" = 1 ]; then
 	# needs the mapping/pinhole rule and the forward chain retains policy drop.
 	nft insert rule inet filter forward ct state established,related accept
 fi
+# Record the daemon's outgoing PCP multicast traffic from before it starts: one
+# capture per LAN (eth0) and WAN (wan0) interface, for the daemon-restart fixture.
+if [ -n "${PCP_TEST_CAPTURE_DIR:-}" ]; then
+	mkdir -p "$PCP_TEST_CAPTURE_DIR"
+	tcpdump -i eth0 -n -U -Q out -w "$PCP_TEST_CAPTURE_DIR/lan-0.pcap" 'udp and dst port 5350' 2>/dev/null &
+	tcpdump -i wan0 -n -U -Q out -w "$PCP_TEST_CAPTURE_DIR/wan-0.pcap" 'udp and dst port 5350' 2>/dev/null &
+	sleep 1
+fi
 mkdir -p /var/lib/miniupnpd
 exec /usr/sbin/miniupnpd -d -f /etc/miniupnpd.conf "$@"
