@@ -10,7 +10,7 @@ WORKDIR /src
 COPY . /src
 RUN cd /src/miniupnpd \
  && ./configure --firewall=nftables --pcp-peer --ipv6 --disable-tests \
- && make -j2 \
+ && CPPFLAGS="-DPCP_ANNOUNCE_COUNT=5" make -j2 \
  && install -D -m 0755 miniupnpd /usr/sbin/miniupnpd \
  && install -D -m 0755 netfilter_nft/scripts/nft_init.sh /etc/miniupnpd/scripts/nft_init.sh \
  && install -D -m 0644 netfilter_nft/scripts/miniupnpd_functions.sh /etc/miniupnpd/scripts/miniupnpd_functions.sh

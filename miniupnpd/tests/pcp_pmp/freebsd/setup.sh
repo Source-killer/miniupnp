@@ -20,7 +20,7 @@ pfctl_dir=$(dirname "$(ls /usr/lib/private/libpfctl.* 2>/dev/null | head -n 1)")
 	&& if grep -q lpfctl bsdmake.inc && [ "$pfctl_dir" != . ]; then \
 		echo "LDFLAGS += -L$pfctl_dir -Wl,-rpath,$pfctl_dir" >> bsdmake.inc; fi \
 	&& if grep -q lpfctl bsdmake.inc; then echo "LIBS += -lnv" >> bsdmake.inc; fi \
-	&& make -f Makefile.bsd >"$WORK/build.log" 2>&1) || {
+	&& CPPFLAGS="-DPCP_ANNOUNCE_COUNT=5" make -f Makefile.bsd >"$WORK/build.log" 2>&1) || {
 	tail -40 "$WORK/build.log" >&2
 	echo "FAIL: build" >&2
 	exit 1

@@ -72,7 +72,7 @@ if [ "$ready" -ne 1 ]; then
 	echo "Docker PCP server did not become ready on UDP port 5351." >&2
 	exit 1
 fi
-sleep 2
+sleep 6
 
 # Flush the captures (tcpdump writes the pcap trailer on SIGINT), then copy out.
 "$DOCKER_BIN" exec "$CONTAINER" pkill -INT tcpdump || true

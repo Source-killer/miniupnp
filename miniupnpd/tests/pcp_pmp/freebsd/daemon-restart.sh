@@ -24,7 +24,7 @@ sleep 1
 
 miniupnpd/miniupnpd -d -f "$WORK/miniupnpd.conf" >"$OUT/miniupnpd.log" 2>&1 &
 daemon=$!
-sleep 5
+sleep 8
 kill "$daemon" 2>/dev/null || true
 kill $(cat "$OUT/tcpdump.pids") 2>/dev/null || true
 sleep 1

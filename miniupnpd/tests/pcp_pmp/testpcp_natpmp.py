@@ -751,8 +751,8 @@ PCAP_MAGICS = {
 }
 
 
-def read_pcap_frames(path):
-    """Return the Ethernet frames of a classic pcap file written by tcpdump -w."""
+def read_pcap_packets(path):
+    """Return (timestamp seconds, Ethernet frame) pairs of a classic pcap file written by tcpdump -w."""
     with open(path, "rb") as pcap:
         data = pcap.read()
     if len(data) < 24 or data[:4] not in PCAP_MAGICS:
@@ -761,12 +761,19 @@ def read_pcap_frames(path):
     linktype = struct.unpack(endian + "I", data[20:24])[0]
     if linktype != 1:
         raise AssertionError(f"{path}: unsupported link type {linktype} (need Ethernet)")
-    frames, offset = [], 24
+    nanoseconds = data[:4] in (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d")
+    packets, offset = [], 24
     while offset + 16 <= len(data):
-        captured = struct.unpack(endian + "I", data[offset + 8:offset + 12])[0]
-        frames.append(data[offset + 16:offset + 16 + captured])
+        seconds, fraction, captured = struct.unpack(endian + "III", data[offset:offset + 12])
+        timestamp = seconds + fraction / (1e9 if nanoseconds else 1e6)
+        packets.append((timestamp, data[offset + 16:offset + 16 + captured]))
         offset += 16 + captured
-    return frames
+    return packets
+
+
+def read_pcap_frames(path):
+    """Return the Ethernet frames of a classic pcap file written by tcpdump -w."""
+    return [frame for _timestamp, frame in read_pcap_packets(path)]
 
 
 def parse_udp_frame(frame):
@@ -800,7 +807,7 @@ def matching_udp_packets(path, expect, family, check_payload):
     """UDP packets in a capture that go to the expected multicast destination."""
     destination = ipaddress.ip_address(expect["destinations"][family])
     matches = []
-    for frame in read_pcap_frames(path):
+    for timestamp, frame in read_pcap_packets(path):
         packet = parse_udp_frame(frame)
         if packet is None or packet[1] != destination or packet[3] != expect["destination_port"]:
             continue
@@ -810,8 +817,31 @@ def matching_udp_packets(path, expect, family, check_payload):
                     or payload[0] != expect["version"] or payload[1] != expect["opcode"]
                     or payload[3] not in expect["result"]):
                 continue
-        matches.append(packet)
+        matches.append(packet + (timestamp,))
     return matches
+
+
+def check_announce_retransmission(name, packets, expect):
+    """RFC 6887 section 14.1.3 repeat rules for one interface's ANNOUNCE packets."""
+    problems = []
+    count = len(packets)
+    if count < expect["min_count"] or count > expect["max_count"]:
+        return [f"{name}: {count} ANNOUNCE packet(s), expected {expect['min_count']}-{expect['max_count']}"]
+    times = [packet[5] for packet in packets]
+    gaps_ms = [(later - earlier) * 1000 for earlier, later in zip(times, times[1:])]
+    if gaps_ms and gaps_ms[0] < expect["min_first_gap_ms"]:
+        problems.append(f"{name}: first gap {gaps_ms[0]:.0f} ms is below {expect['min_first_gap_ms']} ms")
+    for index in range(1, len(gaps_ms)):
+        if gaps_ms[index] < gaps_ms[index - 1] * expect["min_gap_ratio"]:
+            problems.append(f"{name}: gap {index + 1} ({gaps_ms[index]:.0f} ms) does not grow from "
+                            f"gap {index} ({gaps_ms[index - 1]:.0f} ms) by {expect['min_gap_ratio']}x")
+    epochs = [struct.unpack("!I", packet[4][8:12])[0] for packet in packets]
+    if any(later < earlier for earlier, later in zip(epochs, epochs[1:])):
+        problems.append(f"{name}: Epoch Time decreased across repeats {epochs}")
+    elapsed = int(times[-1] - times[0])
+    if epochs[-1] - epochs[0] > elapsed + 1:
+        problems.append(f"{name}: Epoch Time advanced {epochs[-1] - epochs[0]} s in {elapsed} s")
+    return problems
 
 
 def run_daemon_restart(case, args):
@@ -841,8 +871,11 @@ def run_daemon_restart(case, args):
         problems = []
         if expect["lan"] == "every":
             for name in lan:
-                if not matching_udp_packets(os.path.join(directory, name), expect, args.family, True):
+                packets = matching_udp_packets(os.path.join(directory, name), expect, args.family, True)
+                if not packets:
                     problems.append(f"no ANNOUNCE to {expect['destinations'][args.family]} on {name[:-5]}")
+                elif "min_count" in expect:
+                    problems += check_announce_retransmission(name[:-5], packets, expect)
         if expect["wan"] == "none":
             for name in wan:
                 leaked = matching_udp_packets(os.path.join(directory, name), expect, args.family, False)
@@ -1028,10 +1061,11 @@ def run_self_tests():
             ipv6 = (ethernet + b"\x86\xdd" + bytes([0x60, 0, 0, 0, 0, len(udp), 17, 1])
                     + ipaddress.ip_address("fd42::1").packed + ipaddress.ip_address("ff02::1").packed + udp)
 
-            def pcap(*frames):
+            def pcap(*frames, times=None):
                 data = struct.pack("<IHHiIII", 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1)
-                for frame in frames:
-                    data += struct.pack("<IIII", 0, 0, len(frame), len(frame)) + frame
+                for index, frame in enumerate(frames):
+                    micro = int((times[index] if times else 0) * 1e6)
+                    data += struct.pack("<IIII", micro // 1000000, micro % 1000000, len(frame), len(frame)) + frame
                 return data
 
             case = {"name": "x", "protocol": "pcp",
@@ -1058,6 +1092,37 @@ def run_self_tests():
             with self.assertRaisesRegex(AssertionError, "leaked on wan-0"):
                 run({**both, "wan-0.pcap": pcap(ipv4)}, "ipv4")
             run({**both, "wan-0.pcap": pcap(ipv6)}, "ipv4")  # other family is not this case's leak
+
+            repeat = {**case, "expect": {**case["expect"], "min_count": 2, "max_count": 10,
+                                         "min_first_gap_ms": 250, "min_gap_ratio": 1.9}}
+
+            def run_repeat(times, epochs=None):
+                epochs = epochs or [0] * len(times)
+                frames = []
+                for epoch in epochs:
+                    frame = bytearray(ipv4)
+                    frame[14 + 20 + 8 + 8:14 + 20 + 8 + 12] = struct.pack("!I", epoch)
+                    frames.append(bytes(frame))
+                files = {"lan-0.pcap": pcap(*frames, times=times), "wan-0.pcap": pcap()}
+
+                def fake(command, **_kwargs):
+                    for name, data in files.items():
+                        with open(os.path.join(command[-2], name), "wb") as handle:
+                            handle.write(data)
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                args = type("Args", (), {"fixture": "fixture.sh", "capture_dir": None, "family": "ipv4"})
+                with patch.object(runner.subprocess, "run", fake):
+                    run_daemon_restart(repeat, args)
+
+            run_repeat([0, 0.25, 0.75, 1.75, 3.75], [5, 5, 5, 6, 8])
+            with self.assertRaisesRegex(AssertionError, "1 ANNOUNCE packet"):
+                run_repeat([0])
+            with self.assertRaisesRegex(AssertionError, "first gap 100 ms"):
+                run_repeat([0, 0.1, 0.5])
+            with self.assertRaisesRegex(AssertionError, "does not grow"):
+                run_repeat([0, 0.25, 0.5, 0.75])
+            with self.assertRaisesRegex(AssertionError, "Epoch Time decreased"):
+                run_repeat([0, 0.25, 0.75], [5, 4, 4])
             with self.assertRaisesRegex(AssertionError, "no LAN or WAN capture"):
                 run({"wan-0.pcap": pcap()}, "ipv4")
 

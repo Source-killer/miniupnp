@@ -158,7 +158,9 @@ observed by a client talking to a running daemon. YAML cases with
 daemon while recording its outgoing packets and leave one classic pcap per
 interface in `DIRECTORY`: `lan-N.pcap` for each LAN and `wan-N.pcap` for each
 external interface. The case's `unsolicited_announce` expectation is then
-checked by the runner. Fixtures: `fixtures/docker.sh` (Linux) and
+checked by the runner. The test builds define `PCP_ANNOUNCE_COUNT=5`
+(production sends ten restart ANNOUNCEs, about 127 s) so the capture finishes in
+seconds; `startup-announce-retransmission` checks the repeat timing. Fixtures: `fixtures/docker.sh` (Linux) and
 `fixtures/freebsd.sh` (the VM). On FreeBSD an unscoped multicast send follows
 the default route, so this is where a daemon that never selects an output
 interface is caught; Linux picks the interface from the socket's source address.
