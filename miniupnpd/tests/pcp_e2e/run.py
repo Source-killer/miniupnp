@@ -14,6 +14,13 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
+for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "common"),
+                "/pcp-common"):
+    if os.path.isdir(_common):
+        sys.path.insert(0, _common)
+
+import pcp_defs  # noqa: E402
+
 try:
     import yaml
 except ImportError as exc:
@@ -317,6 +324,22 @@ def self_test(corpus):
     natpmp_address = bytes((0, 0))
     natpmp_udp = struct.pack("!BBHHHI", 0, 1, 0, 41100, 41100, 120)
     assert natpmp_address == b"\0\0" and len(natpmp_udp) == 12 and natpmp_udp[1] == 1
+    named = pcp_defs.expand_e2e_request({
+        "pcp": "MAP", "lifetime": 120, "protocol": "udp", "internal_port": 1, "suggested_external_port": 1,
+        "options": [{"FILTER": "allowed-peer"}, {"FILTER": {"remote_peer": "denied-peer", "remote_port": 5,
+                    "prefix_length": 24}}, "PREFER_FAILURE", {"UNKNOWN_OPTIONAL": 2}]})
+    assert named["opcode"] == "MAP" and named["prefer_failure"] and named["unknown_optional_options"] == 2
+    assert named["filters"] == [
+        {"remote_peer": "allowed-peer", "remote_port": 0, "prefix_length": {"ipv4": 32, "ipv6": 128}},
+        {"remote_peer": "denied-peer", "remote_port": 5, "prefix_length": 24}]
+    assert pcp_defs.expand_e2e_request({"natpmp": "TCP", "private_port": 1}) == {
+        "protocol_family": "NAT-PMP", "opcode": "TCP", "protocol": "tcp", "private_port": 1}
+    try:
+        pcp_defs.expand_e2e_request({"pcp": "MAP", "options": ["PREFER_FAILURE", {"FILTER": "x"}]})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("out-of-order options must be rejected")
     print(f"PASS YAML sections ({count} logical cases, {family_runs} family runs)")
     print("PASS IPv4/IPv6 PCP MAP, FILTER, and PEER encoding; NAT-PMP encoding")
 
@@ -542,7 +565,7 @@ def main():
     if args.family == "ipv6" and args.external_address == "198.51.100.1":
         args.external_address = "2001:db8:9000::1"
     with open(args.cases, encoding="utf-8") as source:
-        corpus = yaml.safe_load(source)
+        corpus = pcp_defs.expand_e2e_corpus(yaml.safe_load(source))
     if args.self_test:
         self_test(corpus)
         return 0

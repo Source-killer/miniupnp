@@ -271,7 +271,8 @@ run_family() {
     start_packet_capture "/pcp-e2e-artifacts/$family/$section_name/$case_name/packet-capture.pcap"
     "$DOCKER" run -d --name "$RUNNER" --network "$LAN" "$ip_flag" "$lanip" \
       --cap-add NET_ADMIN --entrypoint sh \
-      --volume "$DIR:/pcp-e2e:ro" --volume "$RUN_DIR:/pcp-e2e-artifacts" \
+      --volume "$DIR:/pcp-e2e:ro" --volume "$ROOT/miniupnpd/tests/common:/pcp-common:ro" \
+      --volume "$RUN_DIR:/pcp-e2e-artifacts" \
       "$IMAGE" -c 'if [ "$1" = add ]; then ip -6 address replace fd42:1::2/64 dev eth0 nodad; fi; shift; exec python3 "$@"' \
       pcp-e2e-runner "$runner_ula" /pcp-e2e/run.py \
       --route-through-router --family "$family" --case "$case_name" \

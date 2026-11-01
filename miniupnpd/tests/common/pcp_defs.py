@@ -334,3 +334,98 @@ def expand_corpus(corpus):
         sections.append(section)
     out["sections"] = sections
     return out
+
+
+# ---------------------------------------------------------------------------
+# pcp-e2e-cases.yaml: requests are described to the e2e runner (run.py), which
+# builds the packet bytes itself.  `expand_e2e_corpus` turns the named form
+#
+#   request:
+#     pcp: MAP | PEER                  (PEER also takes remote_peer / remote_peer_port)
+#     lifetime: 120
+#     protocol: udp
+#     internal_port: 41006
+#     suggested_external_port: 41006
+#     options:                         FILTERs first, then PREFER_FAILURE, then
+#       - FILTER: allowed-peer         UNKNOWN_OPTIONAL (the order run.py sends them)
+#       - {FILTER: {remote_peer: denied-peer, remote_port: 42000, prefix_length: 24}}
+#       - PREFER_FAILURE
+#       - {UNKNOWN_OPTIONAL: 1}
+#   request: {natpmp: UDP | TCP | PUBLIC_ADDRESS, private_port: .., public_port: .., lifetime: ..}
+#
+# into the keys run.py reads (opcode, filter/filters, prefer_failure,
+# unknown_optional_options, protocol_family).  A FILTER given only a peer name
+# matches that exact address (prefix /32 for IPv4, /128 for IPv6) on any port;
+# `prefix_length: exact` is that same default.  `defs.packets` + `use:` work as above.
+# ---------------------------------------------------------------------------
+
+E2E_EXACT_PREFIX = {"ipv4": 32, "ipv6": 128}
+
+
+def _expand_e2e_filter(value):
+    filt = {"remote_peer": value} if isinstance(value, str) else dict(value)
+    filt.setdefault("remote_port", 0)
+    if filt.get("prefix_length", "exact") == "exact":
+        filt["prefix_length"] = dict(E2E_EXACT_PREFIX)
+    return filt
+
+
+def expand_e2e_request(spec):
+    if "natpmp" in spec:
+        spec = dict(spec)
+        opcode = spec.pop("natpmp")
+        if opcode not in ("UDP", "TCP", "PUBLIC_ADDRESS"):
+            raise ValueError(f"unknown NAT-PMP opcode {opcode!r}")
+        out = {"protocol_family": "NAT-PMP", "opcode": opcode}
+        if opcode != "PUBLIC_ADDRESS":
+            out["protocol"] = opcode.lower()
+        out.update(spec)
+        return out
+    if "pcp" not in spec:
+        return dict(spec)
+    spec = dict(spec)
+    out = {"opcode": spec.pop("pcp")}
+    options = spec.pop("options", [])
+    out.update(spec)
+    filters, order = [], []
+    for option in options:
+        if isinstance(option, str):
+            name, value = option, None
+        else:
+            (name, value), = option.items()
+        order.append(name)
+        if name == "FILTER":
+            filters.append(_expand_e2e_filter(value))
+        elif name == "PREFER_FAILURE":
+            out["prefer_failure"] = True
+        elif name == "UNKNOWN_OPTIONAL":
+            out["unknown_optional_options"] = value
+        else:
+            raise ValueError(f"unknown option {name!r}")
+    rank = {"FILTER": 0, "PREFER_FAILURE": 1, "UNKNOWN_OPTIONAL": 2}
+    if order != sorted(order, key=rank.__getitem__):
+        raise ValueError("options must be listed as FILTERs, PREFER_FAILURE, UNKNOWN_OPTIONAL")
+    if len(filters) == 1:
+        out["filter"] = filters[0]
+    elif filters:
+        out["filters"] = filters
+    return out
+
+
+def expand_e2e_corpus(corpus):
+    packets = corpus.get("defs", {}).get("packets", {})
+    out = {key: value for key, value in corpus.items() if key != "defs"}
+    sections = []
+    for section in corpus["sections"]:
+        cases = []
+        for case in section["cases"]:
+            case = dict(case)
+            for key in ("request", "requests"):
+                if key in case:
+                    items = case[key] if key == "requests" else [case[key]]
+                    items = [expand_e2e_request(_apply_use(item, packets)) for item in items]
+                    case[key] = items if key == "requests" else items[0]
+            cases.append(case)
+        sections.append(dict(section, cases=cases))
+    out["sections"] = sections
+    return out

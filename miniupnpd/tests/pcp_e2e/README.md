@@ -150,6 +150,26 @@ NAT-PMP cases are IPv4-only because NAT-PMP does not define IPv6 operation.
 FILTER cases
 exercise exact peers, remote ports, prefixes, multiple options, refresh
 updates, prefix-zero clearing, and a maximum-size request. Prefixes are chosen
+Requests are written as named packets and expanded by `../common/pcp_defs.py`:
+
+```yaml
+request:
+  pcp: MAP                       # or PEER (with remote_peer / remote_peer_port)
+  lifetime: 120
+  protocol: udp
+  internal_port: 41006
+  suggested_external_port: 41006
+  options:                       # FILTERs, then PREFER_FAILURE, then UNKNOWN_OPTIONAL
+    - FILTER: allowed-peer       # exact address (/32 or /128), any port
+    - FILTER: {remote_peer: denied-peer, remote_port: 42000, prefix_length: 24}
+    - PREFER_FAILURE
+request: {natpmp: UDP, private_port: 41100, public_port: 41100, lifetime: 120}
+```
+
+`natpmp:` takes `UDP`, `TCP` or `PUBLIC_ADDRESS`. A top-level `defs.packets.<name>`
+with `use: <name>` in a request reuses a packet; the old flat keys (`opcode`,
+`filter`, `prefer_failure`, ...) are still accepted.
+
 per address family to distinguish the allowed and denied traffic agents. The runner encodes FILTER
 fields in RFC order: reserved byte, prefix length, remote peer port, and
 address. RFC 6887 defines prefix zero as removing all prior filters and a
