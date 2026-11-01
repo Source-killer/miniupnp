@@ -37,7 +37,7 @@ Protocol cases and their expectations remain in `pcp-natpmp-cases.yaml`.
 
 ### Writing packets in the corpus
 
-Requests are written as named PCP / NAT-PMP packets; `pcp_defs.py` expands them
+Requests are written as named PCP / NAT-PMP packets; `../common/pcp_defs.py` expands them
 into the low-level `kind:` form the runner builds bytes from (a request that
 still has `kind:` is used as is, for raw or unusual packets).
 
@@ -66,7 +66,7 @@ expect:
   `{PORT_SET: {size: 4, first: 51001}}` spells it out and a hex string is still accepted.
 - `external_port` defaults to 0; set it to `null` to omit the field.
 
-Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `pcp_defs.py`:
+Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `../common/pcp_defs.py`:
 
 ```yaml
 defs:

@@ -164,6 +164,7 @@ run_tests() {
 		set -- --entrypoint python3 "$IMAGE" /pcp-pmp-tests/testpcp_natpmp.py "$@"
 	fi
 	set -- --volume "$SCRIPT_DIR:/pcp-pmp-tests:rw" \
+		--volume "$SCRIPT_DIR/../common:/pcp-pmp-common:ro" \
 		--volume "$RESULTS_DIR:/pcp-pmp-results:rw" \
 		--volume "$DATA_DIR:/pcp-pmp-data:rw" \
 		--env PYTHONDONTWRITEBYTECODE=1 "$@"

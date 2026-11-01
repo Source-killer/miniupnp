@@ -24,7 +24,12 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 
-import pcp_defs
+for _common in (os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "common"),
+                "/pcp-pmp-common"):
+    if os.path.isdir(_common):
+        sys.path.insert(0, _common)
+
+import pcp_defs  # noqa: E402
 
 TIMEOUT = 2.0
 
