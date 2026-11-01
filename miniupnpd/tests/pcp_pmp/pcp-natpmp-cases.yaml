@@ -116,6 +116,7 @@ sections:
       version: 2
       opcode: 0
       reserved: 65535
+      client: source
     expect:
       kind: response
       length: 24
