@@ -65,6 +65,10 @@ expect:
   request's `internal_port` (`port_set: {size: 4, parity: true}` sets parity);
   `{PORT_SET: {size: 4, first: 51001}}` spells it out and a hex string is still accepted.
 - `external_port` defaults to 0; set it to `null` to omit the field.
+- NAT-PMP packets: `natpmp: MAP_UDP | MAP_TCP | PUBLIC_ADDRESS | <name>_RESPONSE | <number>` with
+  `private_port`, `public_port`, `lifetime`; `reserved` defaults to 0 (`null` omits it) and
+  `truncate_to: N` sends only the first N bytes, which replaces raw hex for short datagrams.
+  `verify: natpmp-mapping` derives the usual private/external port and lifetime checks.
 
 Sequence steps (`protocol_sequence`) have more shorthands, all expanded by `../common/pcp_defs.py`:
 

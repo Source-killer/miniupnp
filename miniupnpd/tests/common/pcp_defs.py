@@ -14,7 +14,9 @@ Request forms (anything containing `kind:` is passed through unchanged):
       a key set to null removes its default
       defaults: version 2, client source, external_address '::', external_port 0
   header: ANNOUNCE | MAP | <number>     common header only (malformed-packet tests)
-  natpmp: PUBLIC_ADDRESS | MAP_UDP | MAP_TCP     defaults: version 0
+  natpmp: PUBLIC_ADDRESS | MAP_UDP | MAP_TCP | <name>_RESPONSE | <number>
+      truncate_to: N                    send only the first N bytes (raw datagram)
+      defaults: version 0, reserved 0 (null omits)
   use: <name>                           start from `defs.packets.<name>`; keys
                                         given next to `use` override the template
 
@@ -24,12 +26,12 @@ Steps of a `protocol_sequence` request (and its `cleanup`) can also use:
                          deep-merged over the template (a `null` value deletes a key)
   each: [<override>...]  expand to one step per override, each merged over the
                          template / step body
-  verify: mapping | port-set-mapping
+  verify: mapping | port-set-mapping | natpmp-mapping
                          fill in the standard MAP response `captures` and `assert`
                          values derived from the request (internal port, nonce,
                          protocol, lifetime and, for port-set-mapping, the PORT_SET
                          option); explicit `captures` / `assert` entries override
-  cleanup: auto          delete every distinct successful MAP the steps created
+  cleanup: auto          delete every distinct successful PCP/NAT-PMP MAP the steps created
                          (order not significant)
 
 Options: `{PORT_SET: {size: 4, first: 51001, parity: true}}` encodes the RFC 7753
@@ -61,7 +63,7 @@ RESPONSE_OPCODES = {
 # symbolic field -> low-level field
 MAP_RENAMES = {"nonce": "nonce_hex", "peer": "peer_address"}
 MAP_DEFAULTS = {"version": 2, "client": "source", "external_address": "::", "external_port": 0}
-NATPMP_DEFAULTS = {"version": 0}
+NATPMP_DEFAULTS = {"version": 0, "reserved": 0}
 
 
 def _lookup(table, value, what):
@@ -119,9 +121,16 @@ def expand_request(spec):
         return out
     if "natpmp" in spec:
         out = {"kind": "natpmp", **NATPMP_DEFAULTS,
-               "opcode": _lookup(NATPMP_OPCODES, spec.pop("natpmp"), "NAT-PMP opcode")}
+               "opcode": _lookup({**NATPMP_OPCODES, **RESPONSE_OPCODES["natpmp"]}, spec.pop("natpmp"),
+                                 "NAT-PMP opcode")}
         out.update(spec)
-        return out
+        if "truncate_to" in out:
+            # a deliberately short datagram: sent as raw bytes
+            packet = struct.pack("!BBHHHI", out["version"], out["opcode"], out["reserved"],
+                                 out.get("private_port", 0), out.get("public_port", 0),
+                                 out.get("lifetime", 0))
+            return {"kind": "raw", "hex": packet[:out["truncate_to"]].hex()}
+        return {key: value for key, value in out.items() if value is not None}
     raise ValueError(f"request has no pcp/header/natpmp/kind key: {sorted(spec)}")
 
 
@@ -203,8 +212,21 @@ def _override(derived, explicit):
     return {key: value for key, value in out.items() if value is not None}
 
 
+def derive_natpmp_checks(request):
+    """Captures and asserts for a NAT-PMP mapping response to `request`."""
+    captures = {"private_port": {"offset": 8, "type": "u16"}, "external_port": {"offset": 10, "type": "u16"},
+                "lifetime": {"offset": 12, "type": "u32"}}
+    lifetime = request["lifetime"]
+    checks = {"private_port": {"equals": request["private_port"]},
+              "external_port": {"equals": 0} if lifetime == 0 else {"nonzero": True},
+              "lifetime": {"equals": 0} if lifetime == 0 else {"min": 1, "max": lifetime}}
+    return captures, checks
+
+
 def derive_checks(mode, request):
     """Standard captures and asserts for a MAP response to `request`."""
+    if mode == "natpmp-mapping":
+        return derive_natpmp_checks(request)
     captures = copy.deepcopy(MAPPING_CAPTURES)
     checks = {"internal": {"equals": request["internal_port"]},
               "nonce": {"equals": request["nonce_hex"]},
@@ -243,6 +265,16 @@ def auto_cleanup(steps):
     out, seen = [], set()
     for step in steps:
         request = step.get("request", {})
+        if (request.get("kind") == "natpmp" and request.get("opcode") in (1, 2)
+                and isinstance(request.get("lifetime"), int) and request["lifetime"] > 0
+                and step.get("expect", {}).get("result") == [0]):
+            key = ("natpmp", request["opcode"], request["private_port"])
+            if key not in seen:
+                seen.add(key)
+                out.append({"protocol": "natpmp", "request": dict(request, lifetime=0, public_port=0),
+                            "expect": {"version": 0, "opcode": 128 + request["opcode"],
+                                       "result": [0], "length": 16}})
+            continue
         if (request.get("kind") != "pcp_map" or not isinstance(request.get("lifetime"), int)
                 or request["lifetime"] <= 0 or step.get("expect", {}).get("result") != [0]):
             continue

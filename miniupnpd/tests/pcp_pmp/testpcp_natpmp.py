@@ -1016,7 +1016,14 @@ def run_self_tests():
                 "options": [{"code": 2}, {"code": 130, "data_hex": "0001c73900"}]})
             self.assertEqual(case["expect"], {"opcode": 129, "result": [11]})
             self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_TCP", "private_port": 1}),
-                             {"kind": "natpmp", "version": 0, "opcode": 2, "private_port": 1})
+                             {"kind": "natpmp", "version": 0, "reserved": 0, "opcode": 2, "private_port": 1})
+            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_UDP", "reserved": None})["opcode"], 1)
+            self.assertNotIn("reserved", pcp_defs.expand_request({"natpmp": "MAP_UDP", "reserved": None}))
+            self.assertEqual(
+                pcp_defs.expand_request({"natpmp": "MAP_TCP", "private_port": 49001, "lifetime": 300,
+                                         "truncate_to": 11}),
+                {"kind": "raw", "hex": "00020000bf690000000001"})
+            self.assertEqual(pcp_defs.expand_request({"natpmp": "MAP_UDP_RESPONSE"})["opcode"], 129)
             self.assertEqual(pcp_defs.expand_request({"header": 127})["opcode"], 127)
             with self.assertRaises(ValueError):
                 pcp_defs.expand_request({"pcp": "NOPE"})

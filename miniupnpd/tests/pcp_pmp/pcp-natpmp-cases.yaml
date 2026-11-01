@@ -63,6 +63,16 @@ defs:
         external: {nonzero: true, max: 65532}
       request:
         pcp: MAP
+    map-udp-success-natpmp-mapping:
+      protocol: natpmp
+      expect:
+        version: 0
+        opcode: MAP_UDP_RESPONSE
+        result: [SUCCESS]
+        length: 16
+      verify: natpmp-mapping
+      request:
+        natpmp: MAP_UDP
     map-success-checked:
       protocol: pcp
       expect:
@@ -91,6 +101,16 @@ defs:
         size: {equals: 2}
       request:
         pcp: MAP
+    map-tcp-success-natpmp-mapping:
+      protocol: natpmp
+      expect:
+        version: 0
+        opcode: MAP_TCP_RESPONSE
+        result: [SUCCESS]
+        length: 16
+      verify: natpmp-mapping
+      request:
+        natpmp: MAP_TCP
     map-success-checked-2:
       protocol: pcp
       expect:
@@ -189,42 +209,6 @@ defs:
         size: {equals: 2}
       request:
         pcp: MAP
-    map-udp-success-checked:
-      protocol: natpmp
-      expect:
-        version: 0
-        opcode: MAP_UDP_RESPONSE
-        result: [SUCCESS]
-        length: 16
-      captures:
-        private_port: {offset: 8, type: u16}
-        external_port: {offset: 10, type: u16}
-        lifetime: {offset: 12, type: u32}
-      assert:
-        private_port: {equals: 49011}
-        external_port: {equals: 0}
-        lifetime: {equals: 0}
-      request:
-        natpmp: MAP_UDP
-        reserved: 0
-    map-tcp-success-checked:
-      protocol: natpmp
-      expect:
-        version: 0
-        opcode: MAP_TCP_RESPONSE
-        result: [SUCCESS]
-        length: 16
-      captures:
-        private_port: {offset: 8, type: u16}
-        external_port: {offset: 10, type: u16}
-        lifetime: {offset: 12, type: u32}
-      assert:
-        private_port: {equals: 49012}
-        external_port: {equals: 0}
-        lifetime: {equals: 0}
-      request:
-        natpmp: MAP_TCP
-        reserved: 0
 # Sections document protocol scope; each case declares its request and expected behavior.
 sections:
 - title: 'RFC 6887 PCP: Base protocol and malformed packets'
@@ -1036,6 +1020,7 @@ sections:
           private_port: 47001
           public_port: 47001
           lifetime: 300
+          reserved: null
         expect:
           version: 0
           opcode: MAP_UDP_RESPONSE
@@ -1048,6 +1033,7 @@ sections:
           private_port: 47001
           public_port: 0
           lifetime: 0
+          reserved: null
         expect:
           version: 0
           opcode: MAP_UDP_RESPONSE
@@ -1098,6 +1084,7 @@ sections:
           private_port: 47102
           public_port: 48101
           lifetime: 300
+          reserved: null
         expect:
           version: 0
           opcode: MAP_UDP_RESPONSE
@@ -1131,6 +1118,7 @@ sections:
           private_port: 47102
           public_port: 0
           lifetime: 0
+          reserved: null
         expect:
           version: 0
           opcode: MAP_UDP_RESPONSE
@@ -11936,8 +11924,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '0001'
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 2
     expect:
       kind: silence
     description: Send only a NAT-PMP mapping opcode; the incomplete request should be ignored.
@@ -11945,8 +11935,7 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 008000000000000000000000
+      natpmp: PUBLIC_ADDRESS_RESPONSE
     expect:
       kind: silence
     description: Set the response bit on a NAT-PMP packet and verify it is ignored.
@@ -11956,7 +11945,6 @@ sections:
     families: [ipv4]
     request:
       natpmp: MAP_UDP
-      reserved: 0
       private_port: 0
       public_port: 0
       lifetime: 3600
@@ -12070,8 +12058,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: ''
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 0
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 0-byte mapping request without creating a mapping."
@@ -12080,8 +12070,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '00'
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 1
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 1-byte mapping request without creating a mapping."
@@ -12090,8 +12082,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '000100'
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 3
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 3-byte mapping request without creating a mapping."
@@ -12100,8 +12094,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '00010000'
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 4
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 4-byte mapping request without creating a mapping."
@@ -12110,8 +12106,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 5
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 5-byte mapping request without creating a mapping."
@@ -12120,8 +12118,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf69
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 6
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 6-byte mapping request without creating a mapping."
@@ -12130,8 +12130,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf6900
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 7
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 7-byte mapping request without creating a mapping."
@@ -12140,8 +12142,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf690000
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 8
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 8-byte mapping request without creating a mapping."
@@ -12150,8 +12154,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf69000000
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 9
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 9-byte mapping request without creating a mapping."
@@ -12160,8 +12166,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf6900000000
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 10
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 10-byte mapping request without creating a mapping."
@@ -12170,8 +12178,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00010000bf690000000001
+      natpmp: MAP_UDP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 11
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 11-byte mapping request without creating a mapping."
@@ -12180,8 +12190,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '000200'
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 3
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 3-byte mapping request without creating a mapping."
@@ -12190,8 +12202,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '00020000'
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 4
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 4-byte mapping request without creating a mapping."
@@ -12200,8 +12214,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 5
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 5-byte mapping request without creating a mapping."
@@ -12210,8 +12226,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf69
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 6
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 6-byte mapping request without creating a mapping."
@@ -12220,8 +12238,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf6900
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 7
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 7-byte mapping request without creating a mapping."
@@ -12230,8 +12250,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf690000
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 8
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 8-byte mapping request without creating a mapping."
@@ -12240,8 +12262,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf69000000
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 9
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 9-byte mapping request without creating a mapping."
@@ -12250,8 +12274,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf6900000000
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 10
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 10-byte mapping request without creating a mapping."
@@ -12260,8 +12286,10 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00020000bf690000000001
+      natpmp: MAP_TCP
+      private_port: 49001
+      lifetime: 300
+      truncate_to: 11
     expect:
       kind: silence
     description: "RFC 6886 \xA73.3: discard an incomplete 11-byte mapping request without creating a mapping."
@@ -12270,8 +12298,9 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00810000bf6900000000012c
+      natpmp: MAP_UDP_RESPONSE
+      private_port: 49001
+      lifetime: 300
     expect:
       kind: silence
     description: "RFC 6886 \xA73.5: silently ignore packets with the response bit set, including mapping opcodes."
@@ -12280,8 +12309,9 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00820000bf6900000000012c
+      natpmp: MAP_TCP_RESPONSE
+      private_port: 49001
+      lifetime: 300
     expect:
       kind: silence
     description: "RFC 6886 \xA73.5: silently ignore packets with the response bit set, including mapping opcodes."
@@ -12290,8 +12320,9 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: 00ff0000bf6900000000012c
+      natpmp: 255
+      private_port: 49001
+      lifetime: 300
     expect:
       kind: silence
     description: "RFC 6886 \xA73.5: silently ignore packets with the response bit set, including mapping opcodes."
@@ -12300,8 +12331,8 @@ sections:
     protocol: natpmp
     families: [ipv4]
     request:
-      kind: raw
-      hex: '000300000000000011223344'
+      natpmp: 3
+      lifetime: 287454020
     expect:
       kind: response
       version: 0
@@ -12320,7 +12351,6 @@ sections:
     families: [ipv4]
     request:
       natpmp: MAP_UDP
-      reserved: 0
       private_port: 0
       public_port: 49000
       lifetime: 300
@@ -12360,35 +12390,13 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49001}
-          external_port: {nonzero: true}
-          lifetime: {min: 1, max: 300}
+        verify: natpmp-mapping
       cleanup:
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49001
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49001}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
     expect:
       kind: lifecycle
       result: [SUCCESS]
@@ -12404,7 +12412,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 49011
           lifetime: 300
@@ -12413,18 +12420,18 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 49111
           lifetime: 0
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 49211
           lifetime: 0
       cleanup:
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 0
@@ -12445,7 +12452,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 49011
           lifetime: 300
@@ -12454,16 +12460,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {nonzero: true, remember: assigned}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 49111
           lifetime: 300
@@ -12472,14 +12476,13 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $assigned}
+          private_port: null
+          lifetime: null
       cleanup:
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 0
@@ -12500,7 +12503,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 49011
           lifetime: 300
@@ -12509,16 +12511,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {nonzero: true, remember: assigned}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 49011
           lifetime: 300
@@ -12527,14 +12527,13 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $assigned}
+          private_port: null
+          lifetime: null
       cleanup:
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 0
@@ -12554,7 +12553,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49011
           public_port: 0
           lifetime: 1
@@ -12563,14 +12561,12 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
-          lifetime: {min: 1, max: 1}
+          private_port: null
+          external_port: null
       cleanup:
-      - use: map-udp-success-checked
+      - use: map-udp-success-natpmp-mapping
         request:
           private_port: 49011
           public_port: 0
@@ -12590,7 +12586,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 49012
           lifetime: 300
@@ -12599,18 +12594,18 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 49112
           lifetime: 0
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 49212
           lifetime: 0
       cleanup:
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 0
@@ -12631,7 +12626,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 49012
           lifetime: 300
@@ -12640,16 +12634,14 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {nonzero: true, remember: assigned}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 49112
           lifetime: 300
@@ -12658,14 +12650,13 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $assigned}
+          private_port: null
+          lifetime: null
       cleanup:
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 0
@@ -12686,7 +12677,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 49012
           lifetime: 300
@@ -12695,16 +12685,14 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {nonzero: true, remember: assigned}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 49012
           lifetime: 300
@@ -12713,14 +12701,13 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $assigned}
+          private_port: null
+          lifetime: null
       cleanup:
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 0
@@ -12740,7 +12727,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49012
           public_port: 0
           lifetime: 1
@@ -12749,14 +12735,12 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
-          lifetime: {min: 1, max: 1}
+          private_port: null
+          external_port: null
       cleanup:
-      - use: map-tcp-success-checked
+      - use: map-tcp-success-natpmp-mapping
         request:
           private_port: 49012
           public_port: 0
@@ -12776,7 +12760,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49021
           public_port: 49020
           lifetime: 300
@@ -12785,16 +12768,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {remember: first}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49022
           public_port: 49020
           lifetime: 300
@@ -12803,16 +12784,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {not_equals: $first, remember: second}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49022
           public_port: 49020
           lifetime: 300
@@ -12821,16 +12800,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $second}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49021
           public_port: 49020
           lifetime: 300
@@ -12839,53 +12816,22 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $first}
+          private_port: null
+          lifetime: null
       cleanup:
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49021
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49021}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49022
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49022}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
     expect:
       kind: lifecycle
       result: [SUCCESS]
@@ -12902,7 +12848,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49031
           public_port: 49030
           lifetime: 300
@@ -12911,16 +12856,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {remember: udp}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49031
           public_port: 49030
           lifetime: 300
@@ -12929,36 +12872,19 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $udp}
-      - protocol: natpmp
+          private_port: null
+          lifetime: null
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49031
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49031}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49031
           public_port: 49030
           lifetime: 300
@@ -12967,53 +12893,22 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: $udp}
+          private_port: null
+          lifetime: null
       cleanup:
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49031
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49031}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
-      - protocol: natpmp
+      - use: map-tcp-success-natpmp-mapping
         request:
-          natpmp: MAP_TCP
-          reserved: 0
           private_port: 49031
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_TCP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49031}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
     expect:
       kind: lifecycle
       result: [SUCCESS]
@@ -13081,7 +12976,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49071
           public_port: 49071
           lifetime: 300
@@ -13093,7 +12987,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49072
           public_port: 49072
           lifetime: 300
@@ -13105,7 +12998,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49073
           public_port: 49073
           lifetime: 300
@@ -13114,30 +13006,14 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 0
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 0}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
       - protocol: natpmp
         request:
           natpmp: MAP_TCP
-          reserved: 0
           private_port: 49073
           public_port: 49083
           lifetime: 300
@@ -13146,16 +13022,14 @@ sections:
           opcode: MAP_TCP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: 49073}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49071
           public_port: 49081
           lifetime: 300
@@ -13164,16 +13038,14 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: 49081}
+          private_port: null
+          lifetime: null
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49072
           public_port: 49082
           lifetime: 300
@@ -13182,73 +13054,27 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
         assert:
           external_port: {equals: 49082}
+          private_port: null
+          lifetime: null
       cleanup:
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49071
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49071}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49072
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49072}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
-      - protocol: natpmp
+      - use: map-tcp-success-natpmp-mapping
         request:
-          natpmp: MAP_TCP
-          reserved: 0
           private_port: 49073
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_TCP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49073}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
     expect:
       kind: lifecycle
       result: [SUCCESS]
@@ -13268,7 +13094,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49091
           public_port: 49091
           lifetime: 1
@@ -13280,7 +13105,6 @@ sections:
       - protocol: natpmp
         request:
           natpmp: MAP_UDP
-          reserved: 0
           private_port: 49091
           public_port: 49092
           lifetime: 300
@@ -13289,34 +13113,18 @@ sections:
           opcode: MAP_UDP_RESPONSE
           result: [SUCCESS]
           length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
+        verify: natpmp-mapping
+        delay_seconds: 2.1
         assert:
           external_port: {equals: 49092}
-        delay_seconds: 2.1
+          private_port: null
+          lifetime: null
       cleanup:
-      - protocol: natpmp
+      - use: map-udp-success-natpmp-mapping
         request:
-          natpmp: MAP_UDP
-          reserved: 0
           private_port: 49091
           public_port: 0
           lifetime: 0
-        expect:
-          version: 0
-          opcode: MAP_UDP_RESPONSE
-          result: [SUCCESS]
-          length: 16
-        captures:
-          private_port: {offset: 8, type: u16}
-          external_port: {offset: 10, type: u16}
-          lifetime: {offset: 12, type: u32}
-        assert:
-          private_port: {equals: 49091}
-          external_port: {equals: 0}
-          lifetime: {equals: 0}
     expect:
       kind: lifecycle
       result: [SUCCESS]
