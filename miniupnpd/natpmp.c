@@ -275,6 +275,7 @@ void ProcessIncomingNATPMPPacket(int s, unsigned char *msg_buff, int len,
 			char iaddr_old[16];
 			unsigned short iport_old;
 			unsigned int timestamp;
+			char desc[64];
 
 			iport = READNU16(req+4);
 			eport = READNU16(req+6);
@@ -310,8 +311,9 @@ void ProcessIncomingNATPMPPacket(int s, unsigned char *msg_buff, int len,
 					       index, proto2, eport2, iaddr2, iport2, desc);
 					if(0 == strcmp(iaddr2, senderaddrstr)
 					  && 0 == memcmp(desc, "NAT-PMP", 7)) {
-						/* (iport == 0) => remove all the mappings for this client */
-						if((iport == 0) || ((iport == iport2) && (proto == proto2))) {
+						/* (iport == 0) => remove all the mappings for this client
+						 * using the requested protocol (RFC 6886 section 3.4) */
+						if((proto == proto2) && ((iport == 0) || (iport == iport2))) {
 							r = _upnp_delete_redir(eport2, proto2);
 							if(r < 0) {
 								syslog(LOG_ERR, "Failed to remove NAT-PMP mapping eport %hu, protocol %s",
@@ -332,7 +334,6 @@ void ProcessIncomingNATPMPPacket(int s, unsigned char *msg_buff, int len,
 			} else { /* iport > 0 && lifetime > 0 */
 				unsigned short eport_first = 0;
 				int any_eport_allowed = 0;
-				char desc[64];
 				if(eport==0)	/* if no suggested external port, use same a internal port */
 					eport = iport;
 				while(resp[3] == 0) {
@@ -367,11 +368,16 @@ void ProcessIncomingNATPMPPacket(int s, unsigned char *msg_buff, int len,
 #endif
 					r = get_redirect_rule(ext_if_name, eport, proto,
 					                      iaddr_old, sizeof(iaddr_old),
-					                      &iport_old, 0, 0, 0, 0,
+					                      &iport_old, desc, sizeof(desc), 0, 0,
 					                      &timestamp, 0, 0);
 					if(r==0) {
 						if(strcmp(senderaddrstr, iaddr_old)==0
 						    && iport==iport_old) {
+							if(0 == strncmp(desc, "PCP ", 4)) {
+								/* Preserve PCP mapping ownership and nonce state. */
+								resp[3] = 2; /* Not Authorized/Refused */
+								break;
+							}
 							/* redirection already existing */
 							syslog(LOG_INFO, "port %hu %s already redirected to %s:%hu, replacing",
 							       eport, (proto==IPPROTO_TCP)?"tcp":"udp", iaddr_old, iport_old);
