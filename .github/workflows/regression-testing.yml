@@ -5,9 +5,9 @@ name: 'miniupnpd: Regression testing'
 # for each other, so they run at the same time. "wire" is the request / response
 # suite (pcp_wire), "end2end" the forwarding suite (pcp_e2e):
 #   self-test       the harness's own checks (common/run_self_tests.sh)
+#   upnp-wire-linux, upnp-e2e-linux  the UPnP suites on Docker, master's daemon against the pull request's
 #   wire-linux      the wire suite on Docker, master's daemon against the pull request's
-#   wire-freebsd    the wire suite, its daemon-restart and lease cases on FreeBSD 14.5 and 15.1 (pf),
-#                   master's daemon against the pull request's
+#   wire-freebsd    the wire suite, its daemon-restart and lease cases on FreeBSD 14.5 and 15.1 (pf)
 #   end2end-linux   the end-to-end suite on Docker (run-docker.sh), master's daemon against the pull request's
 #   end2end-freebsd the same with a FreeBSD pf router in QEMU (run-freebsd.sh), 14.5 and 15.1
 # The comparisons build both daemons with the pull request's harness; a case that passed
@@ -177,11 +177,8 @@ jobs:
           path: |
             ~/.cache/miniupnpd-pcp-test/FreeBSD-*.qcow2
             ~/.cache/miniupnpd-pcp-test/prepared-*.qcow2
-            ~/.cache/miniupnpd-pcp-test/id_ed25519*
-          # the key logs in to the prepared image, so the two are cached together. It opens
-          # only the throwaway VM, on 127.0.0.1 of the runner.
           key: >-
-            end2end-freebsd-keyed-${{ matrix.release }}-${{ hashFiles('candidate/miniupnpd/tests/pcp_wire/freebsd/prepare.sh') }}
+            end2end-freebsd-${{ matrix.release }}-${{ hashFiles('candidate/miniupnpd/tests/pcp_wire/freebsd/prepare.sh') }}
 
       - name: Compare master with pull request on freebsd
         env:
@@ -273,6 +270,104 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  upnp-wire-linux:
+    name: upnp-wire-linux (Docker, master against the pull request)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out pull request head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Check out master baseline
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.before || 'master' }}
+          path: master
+          persist-credentials: false
+
+      - name: Install test corpus parser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
+      - name: Compare master with pull request
+        # the suites have FAILs (spec gaps): only a change against master fails this job
+        run: |
+          python3 candidate/miniupnpd/tests/pcp_wire/tools/compare_daemon_branches.py \
+            --suite upnp-wire \
+            --master-source master \
+            --candidate-source candidate \
+            --output upnp-wire-linux
+
+      - name: Publish comparison summary
+        if: always()
+        run: |
+          if [ -f upnp-wire-linux/summary.md ]; then
+            cat upnp-wire-linux/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results and comparison report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: upnp-wire-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upnp-wire-linux/
+          if-no-files-found: warn
+          retention-days: 14
+
+  upnp-e2e-linux:
+    name: upnp-e2e-linux (Docker, master against the pull request)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out pull request head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: candidate
+          persist-credentials: false
+
+      - name: Check out master baseline
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.before || 'master' }}
+          path: master
+          persist-credentials: false
+
+      - name: Install test corpus parser
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-yaml
+
+      - name: Compare master with pull request
+        # the suites have FAILs (spec gaps): only a change against master fails this job
+        run: |
+          python3 candidate/miniupnpd/tests/pcp_wire/tools/compare_daemon_branches.py \
+            --suite upnp-e2e \
+            --master-source master \
+            --candidate-source candidate \
+            --output upnp-e2e-linux
+
+      - name: Publish comparison summary
+        if: always()
+        run: |
+          if [ -f upnp-e2e-linux/summary.md ]; then
+            cat upnp-e2e-linux/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results and comparison report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: upnp-e2e-linux-${{ github.run_id }}-${{ github.run_attempt }}
+          path: upnp-e2e-linux/
+          if-no-files-found: warn
+          retention-days: 14
+
   wire-freebsd:
     # freebsd/ci.sh runs the suite, the daemon-restart and the lease-file cases
     # with a pf router in a FreeBSD VM.
@@ -311,31 +406,15 @@ jobs:
             harness=$PWD/candidate/miniupnpd/tests/pcp_wire
             # Packages (idempotent), PyYAML for this python, libpfctl on 15+.
             PCP_TEST_PYTHON=1 sh "$harness/freebsd/prepare.sh"
-            # Both daemons with this pull request's harness. The next step compares
-            # them: a failure here alone does not fail the job.
+            # Master's daemon with this pull request's harness: informational,
+            # it shows what the pull request changes.
             sh "$harness/freebsd/ci.sh" "$PWD/master" "$PWD/freebsd-results/master" || true
-            sh "$harness/freebsd/ci.sh" "$PWD/candidate" "$PWD/freebsd-results/candidate" || true
-
-      - name: Install test corpus parser
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-yaml
-
-      - name: Compare master with pull request on FreeBSD ${{ matrix.release }}
-        run: |
-          python3 candidate/miniupnpd/tests/pcp_wire/tools/compare_daemon_branches.py \
-            --platform freebsd \
-            --results freebsd-results/master freebsd-results/candidate \
-            --master-source master \
-            --candidate-source candidate \
-            --output freebsd-results/comparison
+            # The pull request's daemon must pass.
+            sh "$harness/freebsd/ci.sh" "$PWD/candidate" "$PWD/freebsd-results/candidate"
 
       - name: Publish FreeBSD summary
         if: always()
         run: |
-          if [ -f freebsd-results/comparison/summary.md ]; then
-            cat freebsd-results/comparison/summary.md >> "$GITHUB_STEP_SUMMARY"
-          fi
           for tree in master candidate; do
             if [ -f "freebsd-results/$tree/status.md" ]; then
               {

@@ -36,6 +36,8 @@ check "traffic agent" common python3 traffic_agent.py --self-test
 check "pcp_wire runner" pcp_wire python3 run_pcp_wire_cases.py --self-test
 check "pcp_wire tools" pcp_wire/tools python3 -m unittest discover -p 'test_*.py'
 check "pcp_e2e runner" pcp_e2e python3 run_pcp_e2e_cases.py --self-test
+check "upnp_wire runner" upnp_wire python3 run_upnp_wire_cases.py --self-test
+check "upnp_e2e runner" upnp_e2e python3 run_upnp_e2e_cases.py --self-test
 for script in $(cd "$TESTS" && find . -name '*.sh' | sed 's|^\./||' | sort); do
   check "sh -n $script" . sh -n "$script"
 done

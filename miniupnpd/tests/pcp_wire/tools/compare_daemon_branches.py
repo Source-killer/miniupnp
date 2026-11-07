@@ -3,9 +3,9 @@
 
 --suite wire (default): the request / response suite (pcp_wire) on Docker.
 --suite end2end: the forwarding suite (pcp_e2e), --platform linux (run-docker.sh) or freebsd
-(run-freebsd.sh, a FreeBSD pf router in QEMU). Both daemons run with the candidate's harness.
---results MASTER CANDIDATE: run nothing, compare the status data of two runs which ended (the wire
-suite in the FreeBSD VM of the workflow)."""
+(run-freebsd.sh, a FreeBSD pf router in QEMU).
+--suite upnp-wire, upnp-e2e: the UPnP suites on Docker, on every build of their drivers.
+Both daemons run with the candidate's harness."""
 
 import argparse
 import hashlib
@@ -29,6 +29,9 @@ from lib_test import is_filtered_skip  # noqa: E402  (compare_pcap_wire_fields p
 TESTS = Path('miniupnpd/tests')
 HARNESS = TESTS / 'pcp_wire'
 END2END_DRIVERS = {'linux': 'run-docker.sh', 'freebsd': 'run-freebsd.sh'}
+# suite: (directory, corpus, the prefix of the driver's environment, the title of the report)
+UPNP_SUITES = {'upnp-wire': ('upnp_wire', 'upnp-wire-cases.yaml', 'UPNP_WIRE', 'UPnP wire'),
+               'upnp-e2e': ('upnp_e2e', 'upnp-e2e-cases.yaml', 'UPNP_E2E', 'UPnP end-to-end')}
 UNTRACKED = shutil.ignore_patterns('__pycache__', 'status.md', 'status-data.json')
 STATUSES = {'PASS', 'FAIL', 'XFAIL', 'SKIP'}
 
@@ -135,19 +138,40 @@ def run_end2end(label, tree, output, case_names, platform):
                                 hashlib.sha256(corpus.read_bytes()).hexdigest())
 
 
-def read_status_results(path, platform, corpus_digest):
-    """The results of one platform in a status-data.json, keyed (family, protocol, case)."""
-    data = json.loads(path.read_text())
-    outcomes = {}
-    for family, cases in data['platforms'][platform]['results'].items():
-        for key, (status, detail) in cases.items():
-            protocol, name = key.split('/', 1)
-            if status not in STATUSES:
-                raise ValueError(f'invalid result: {key}')
-            outcomes[(family, protocol, name)] = {'status': status, 'detail': detail}
-    if not any(not is_filtered_skip(item['status'], item['detail']) for item in outcomes.values()):
-        raise ValueError(f'no cases executed in {path}')
+def read_upnp_results(data_file, exit_code, corpus_digest):
+    """The cases of a UPnP driver run, from the status data it wrote: keyed (platform, family, case), as
+    one run covers several builds. A case that fails on master too is no regression: the suites have
+    FAILs (spec gaps), so the comparison, not the exit code, decides."""
+    with data_file.open(encoding='utf-8') as handle:
+        platforms = json.load(handle)['platforms']
+    outcomes = {(platform, family, key): {'status': status, 'detail': detail}
+                for platform, entry in platforms.items()
+                for family, results in entry['results'].items()
+                for key, (status, detail) in results.items()}
+    if not outcomes or any(result['status'] not in STATUSES for result in outcomes.values()):
+        raise ValueError(f'no valid results in {data_file}')
+    failures = sum(result['status'] == 'FAIL' for result in outcomes.values())
+    if exit_code != (1 if failures else 0):
+        raise ValueError(f'harness exit {exit_code} disagrees with {failures} reported failures')
     return outcomes, corpus_digest
+
+
+def run_upnp(label, tree, output, case_names, suite):
+    """One UPnP driver run in `tree`, its log and report under output/label."""
+    directory, corpus, prefix, _title = UPNP_SUITES[suite]
+    folder = output / label
+    folder.mkdir(parents=True)
+    env = os.environ.copy()
+    env.update({f'{prefix}_STATUS_FILE': str(folder / 'status.md'), 'PCP_TEST_SELF_TEST': '0',
+                f'{prefix}_STATUS_DATA_FILE': str(folder / 'status-data.json')})
+    command = [f'./miniupnpd/tests/{directory}/run-docker.sh']
+    for name in case_names:
+        command += ['--case', name]
+    print(f'Running {label} ({suite}); log: {folder / "run.log"}', flush=True)
+    with (folder / 'run.log').open('w') as log:
+        result = subprocess.run(command, cwd=tree, env=env, stdout=log, stderr=subprocess.STDOUT)
+    return read_upnp_results(folder / 'status-data.json', result.returncode,
+                             hashlib.sha256((tree / TESTS / directory / corpus).read_bytes()).hexdigest())
 
 
 def transition(before, after):
@@ -242,11 +266,6 @@ def make_report(output, commits, runs, errors, cases=(), profile='baseline', wan
         raise ValueError('master and candidate used different corpus hashes')
     transitions = compare_results(before, after)
     counts = Counter(kind for _, kind in transitions)
-    regressions = [key for key, kind in transitions if kind == 'regression']
-    print(f'Regressions: {len(regressions)}', flush=True)
-    for key in regressions:
-        print(f"REGRESSION {key[0]} {key[1]}/{key[2]}: {before[key]['status']} -> {after[key]['status']}: "
-              f"{after[key]['detail']}", flush=True)
     lines += [f'- Corpus SHA-256: `{before_digest}`', '',
               '| Run | PASS | FAIL | XFAIL | SKIP |', '|:--|--:|--:|--:|--:|']
     for label, results in (('Master', before), ('Candidate', after)):
@@ -262,15 +281,8 @@ def make_report(output, commits, runs, errors, cases=(), profile='baseline', wan
               'dependencies are shown as new coverage, not established regressions.', '',
               'Download the workflow artifact for the run logs, status tables and JSON results. '
               'Packet captures and wire-field comparisons are produced only with --capture.', '',
-              *(local_capture_command(commits, cases, profile, wan_peer) if reproduce else [])]
-    if regressions:
-        lines += ['## Regressions', '', '| Family | Protocol / case | Master | Candidate | Candidate detail |',
-                  '|:--|:--|:--|:--|:--|']
-        lines += ['| ' + ' | '.join((cell(key[0]), cell(f'{key[1]}/{key[2]}'), before[key]['status'],
-                                     after[key]['status'], cell(after[key]['detail']))) + ' |'
-                  for key in regressions]
-        lines.append('')
-    lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change | Wire fields |',
+              *(local_capture_command(commits, cases, profile, wan_peer) if reproduce else []),
+              '## Case results', '', '| Family | Protocol / case | Master | Candidate | Change | Wire fields |',
               '|:--|:--|:--|:--|:--|:--|']
     comparisons = output / 'comparisons'
     for key, kind in transitions:
@@ -302,21 +314,20 @@ def main():
     parser.add_argument('--master-source', type=Path, required=True, help='master git checkout')
     parser.add_argument('--candidate-source', type=Path, required=True, help='PR head git checkout')
     parser.add_argument('--output', type=Path, required=True, help='new artifact directory')
-    parser.add_argument('--suite', choices=('wire', 'end2end'), default='wire',
-                        help='wire: the pcp_wire suite (default); end2end: the pcp_e2e suite')
+    parser.add_argument('--suite', choices=('wire', 'end2end', *UPNP_SUITES), default='wire',
+                        help='wire: the pcp_wire suite (default); end2end: the pcp_e2e suite; '
+                             'upnp-wire, upnp-e2e: the UPnP suites')
     parser.add_argument('--platform', choices=tuple(END2END_DRIVERS), default='linux',
                         help='the router of an end2end comparison: linux (Docker) or freebsd (pf in QEMU)')
-    parser.add_argument('--results', nargs=2, type=Path, metavar=('MASTER', 'CANDIDATE'),
-                        help='run nothing: compare the status-data.json of two ended wire runs of --platform')
     parser.add_argument('--case', action='append', default=[], help='select one YAML case; repeatable')
     parser.add_argument('--profile', default='baseline', help='explicit YAML server fixture profile (wire)')
     parser.add_argument('--wan-peer', action='store_true', help='enable isolated WAN TCP/UDP traffic fixture (wire)')
     parser.add_argument('--capture', action='store_true',
                         help='also collect pcaps and decoded wire-field comparisons (wire; default: no capture)')
     args = parser.parse_args()
-    if args.results and (args.suite != 'wire' or args.capture or args.wan_peer or args.case):
-        parser.error('--results compares whole wire runs which ended')
-    if args.suite == 'end2end' and (args.capture or args.wan_peer or args.profile != 'baseline'):
+    if args.suite in UPNP_SUITES and args.platform != 'linux':
+        parser.error('the UPnP suites run on --platform linux')
+    if args.suite != 'wire' and (args.capture or args.wan_peer or args.profile != 'baseline'):
         parser.error('--capture, --wan-peer and --profile belong to the wire suite')
     output = args.output.resolve()
     if output.exists():
@@ -326,19 +337,17 @@ def main():
     with tempfile.TemporaryDirectory(prefix='pcp-branch-comparison-') as temporary:
         harness_snapshot = Path(temporary) / 'tests'
         shutil.copytree(HERE.parent, harness_snapshot, ignore=UNTRACKED)
-        corpus = ('pcp_wire/pcp-wire-cases.yaml' if args.suite == 'wire' else 'pcp_e2e/pcp-e2e-cases.yaml')
+        corpus = {'wire': 'pcp_wire/pcp-wire-cases.yaml', 'end2end': 'pcp_e2e/pcp-e2e-cases.yaml',
+                  **{name: f'{item[0]}/{item[1]}' for name, item in UPNP_SUITES.items()}}[args.suite]
         corpus_digest = hashlib.sha256((harness_snapshot / corpus).read_bytes()).hexdigest()
-        for index, (label, source) in enumerate((('master', args.master_source), ('candidate', args.candidate_source))):
+        for label, source in (('master', args.master_source), ('candidate', args.candidate_source)):
             try:
-                if args.results:
-                    commits[label] = command_output(['git', '-C', str(source), 'rev-parse', 'HEAD'])
-                    runs[label] = read_status_results(args.results[index] / 'status-data.json', args.platform,
-                                                      corpus_digest)
-                    continue
                 tree = Path(temporary) / label
                 commits[label] = prepare_tree(source.resolve(), tree, harness_snapshot)
                 if args.suite == 'wire':
                     runs[label] = run_one(label, tree, output, args.case, args.capture, args.profile, args.wan_peer)
+                elif args.suite in UPNP_SUITES:
+                    runs[label] = run_upnp(label, tree, output, args.case, args.suite)
                 else:
                     runs[label] = run_end2end(label, tree, output, args.case, args.platform)
                 if runs[label][1] != corpus_digest:
@@ -349,10 +358,9 @@ def main():
                 'corpus_sha256': corpus_digest, 'cases': args.case, 'profile': args.profile,
                 'capture': args.capture, 'wan_peer': args.wan_peer, 'errors': errors}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-    title = 'PCP/NAT-PMP (wire)' if args.suite == 'wire' else f'PCP end-to-end ({args.platform})'
-    if args.results:
-        title = f'PCP/NAT-PMP (wire, {args.platform})'
-    report = dict(title=title, reproduce=args.suite == 'wire' and not args.results)
+    title = ('PCP/NAT-PMP (wire)' if args.suite == 'wire' else UPNP_SUITES[args.suite][3] if args.suite in UPNP_SUITES
+             else f'PCP end-to-end ({args.platform})')
+    report = dict(title=title, reproduce=args.suite == 'wire')
     try:
         code = make_report(output, commits, runs, errors, args.case, args.profile, args.wan_peer, **report)
     except (OSError, ValueError, KeyError) as error:

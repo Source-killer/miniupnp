@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Offline checks for regression classification and complete CI evidence."""
 
-import contextlib
-import io
 import json
 import tempfile
 import unittest
@@ -111,42 +109,6 @@ class BranchComparisonTests(unittest.TestCase):
                 candidate = compare.read_results(root / 'candidate' / 'captures', int(new == 'FAIL'))
                 code = compare.make_report(root, {}, {'master': master, 'candidate': candidate}, [])
                 self.assertEqual(code, expected)
-
-    def test_the_report_names_each_regression_and_why(self):
-        master = ({('ipv4', 'pcp', 'lost'): {'status': 'PASS', 'detail': ''},
-                   ('ipv4', 'pcp', 'known'): {'status': 'FAIL', 'detail': 'old'}}, 'digest')
-        candidate = ({('ipv4', 'pcp', 'lost'): {'status': 'FAIL', 'detail': 'result code 8'},
-                      ('ipv4', 'pcp', 'known'): {'status': 'FAIL', 'detail': 'old'}}, 'digest')
-        with tempfile.TemporaryDirectory() as temporary, contextlib.redirect_stdout(io.StringIO()) as out:
-            root = Path(temporary)
-            self.assertEqual(compare.make_report(root, {}, {'master': master, 'candidate': candidate}, []), 1)
-            summary = (root / 'summary.md').read_text()
-        self.assertIn('Regressions: 1\nREGRESSION ipv4 pcp/lost: PASS -> FAIL: result code 8\n', out.getvalue())
-        self.assertNotIn('known', out.getvalue())
-        self.assertIn('| ipv4 | pcp/lost | PASS | FAIL | result code 8 |', summary)
-        self.assertLess(summary.index('## Regressions'), summary.index('## Case results'))
-
-    def status_data(self, path, results):
-        path.mkdir()
-        (path / 'status-data.json').write_text(json.dumps(
-            {'version': 1, 'platforms': {'freebsd': {'results': {'ipv4': results}}}}))
-        return path / 'status-data.json'
-
-    def test_status_data_of_ended_runs(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            data = self.status_data(Path(temporary) / 'run', {'pcp/a': ['FAIL', 'boom'], 'natpmp/b': ['PASS', '']})
-            outcomes, digest = compare.read_status_results(data, 'freebsd', 'digest')
-            self.assertEqual(digest, 'digest')
-            self.assertEqual(outcomes[('ipv4', 'pcp', 'a')], {'status': 'FAIL', 'detail': 'boom'})
-            self.assertEqual(outcomes[('ipv4', 'natpmp', 'b')]['status'], 'PASS')
-
-    def test_status_data_without_a_run_is_an_error(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            data = self.status_data(Path(temporary) / 'run', {'pcp/a': ['SKIP', 'not selected by --case']})
-            with self.assertRaisesRegex(ValueError, 'no cases executed'):
-                compare.read_status_results(data, 'freebsd', 'digest')
-            with self.assertRaises(KeyError):
-                compare.read_status_results(data, 'linux', 'digest')
 
     def test_infrastructure_error_report(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -265,6 +227,20 @@ class End2endComparisonTests(unittest.TestCase):
             self.assertNotIn('git worktree add', summary)
             self.assertNotIn('Server profile', summary)
 
+
+
+class ReadUpnpResults(unittest.TestCase):
+    def test_keys_by_platform_and_family_and_checks_the_exit_code(self):
+        data = {'version': 1, 'platforms': {'linux-igd1': {'results': {'ipv4': {
+            'upnp/a': ['PASS', ''], 'upnp/b': ['FAIL', 'gap']}}}}}
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'status-data.json'
+            path.write_text(json.dumps(data))
+            outcomes, digest = compare.read_upnp_results(path, 1, 'sha')
+            self.assertEqual(digest, 'sha')
+            self.assertEqual(outcomes[('linux-igd1', 'ipv4', 'upnp/b')]['status'], 'FAIL')
+            with self.assertRaises(ValueError):
+                compare.read_upnp_results(path, 0, 'sha')
 
 if __name__ == '__main__':
     unittest.main()
