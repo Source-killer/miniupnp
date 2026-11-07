@@ -24,6 +24,7 @@
 #   PCP_TEST_DATA_DIR          where status-data.json is kept (default:
 #                              <repository>/.tmp/tests/pcp_wire)
 #   PCP_TEST_KEEP_VM=1         leave the VM running and keep its work dir
+#   PCP_TEST_VM_COMMAND        what runs in the VM instead of freebsd/ci.sh (another suite)
 #
 # The first run boots the downloaded image once, installs gmake/pkgconf/rsync (and
 # the libpfctl.h header on FreeBSD 15) and caches the result as
@@ -261,7 +262,7 @@ if [ -f "$DATA_FILE" ]; then
 fi
 {
 	rc=0
-	$SSH "cd /root/miniupnp && $PRIV env PCP_TEST_LEASE_ONLY=${PCP_TEST_LEASE_ONLY:-0} PCP_TEST_LEASE_CASES=${PCP_TEST_LEASE_CASES:-1} sh miniupnpd/tests/pcp_wire/freebsd/ci.sh /root/miniupnp /tmp/pcp-results" 2>&1 || rc=$?
+	$SSH "cd /root/miniupnp && $PRIV ${PCP_TEST_VM_COMMAND:-env PCP_TEST_LEASE_ONLY=${PCP_TEST_LEASE_ONLY:-0} PCP_TEST_LEASE_CASES=${PCP_TEST_LEASE_CASES:-1} sh miniupnpd/tests/pcp_wire/freebsd/ci.sh /root/miniupnp /tmp/pcp-results}" 2>&1 || rc=$?
 	echo $rc >"$OUT_DIR/exit-status"
 } | tee "$OUT_DIR/run.log"
 status=$(cat "$OUT_DIR/exit-status")
