@@ -58,6 +58,28 @@ allow 1024-65535 0.0.0.0/0 1024-65535
 deny 0-65535 0.0.0.0/0 0-65535
 EOF
 
+# PCP_TEST_CONF_REPLACE=1: a key=value line of PCP_TEST_EXTRA_CONF replaces the default line
+# of the same option above, instead of following it. miniupnpd does not let a later line undo
+# an earlier one for its flags (enable_upnp=yes after enable_upnp=no, enable_pcp_pmp=no after
+# enable_pcp_pmp=yes). enable_natpmp / enable_pcp_pmp and port / http_port are one option each.
+# An allow / deny line replaces all the default ones: the first matching line decides.
+if [ "${PCP_TEST_CONF_REPLACE:-0}" = 1 ] && [ -n "${PCP_TEST_EXTRA_CONF:-}" ]; then
+	printf '%s\n' "$PCP_TEST_EXTRA_CONF" | awk '
+		function option(line) {
+			sub(/=.*/, "", line); gsub(/[ \t]/, "", line)
+			if (line == "enable_natpmp") return "enable_pcp_pmp"
+			if (line == "http_port") return "port"
+			return line
+		}
+		NR == FNR {
+			if (index($0, "=")) replaced[option($0)] = 1
+			if ($1 == "allow" || $1 == "deny") permissions = 1
+			next
+		}
+		!(index($0, "=") && (option($0) in replaced)) && !(permissions && ($1 == "allow" || $1 == "deny"))' - /etc/miniupnpd.conf > /etc/miniupnpd.conf.new
+	mv /etc/miniupnpd.conf.new /etc/miniupnpd.conf
+fi
+
 # UPnP IGD mode: HTTP on a fixed port and a short SSDP announce interval; PCP_TEST_UPNP_UUID fixes the
 # UDN when the cases expect one. The first enable_upnp=no of a file wins, so it is replaced.
 if [ "${PCP_TEST_ENABLE_UPNP:-no}" = yes ]; then
@@ -71,6 +93,7 @@ fi
 # more settings for a test (lines of the configuration file)
 if [ -n "${PCP_TEST_EXTRA_CONF:-}" ]; then
 	printf '%s\n' "$PCP_TEST_EXTRA_CONF" >> /etc/miniupnpd.conf
+	sed -i '/=@OFF@$/d' /etc/miniupnpd.conf     # key=@OFF@: leave the option out
 fi
 
 # Bind the IPv6 PCP socket to the LAN address instead of "::", as routers with
@@ -80,8 +103,37 @@ if [ "${PCP_TEST_IPV6_LISTENING_IP:-0}" = 1 ]; then
 	echo "ipv6_listening_ip=$lan6" >> /etc/miniupnpd.conf
 fi
 
-/etc/miniupnpd/scripts/nft_init.sh
-if [ "${PCP_TEST_REAL_WAN:-0}" = 1 ]; then
+if [ "${PCP_TEST_CONF_REPLACE:-0}" = 1 ]; then
+	/etc/miniupnpd/scripts/nft_init.sh -f /etc/miniupnpd.conf     # the table and chain options
+else
+	/etc/miniupnpd/scripts/nft_init.sh
+fi
+# A stand-in for minissdpd that records what the daemon submits to its socket.
+minissdpd_socket=$(sed -n 's/^minissdpdsocket=//p' /etc/miniupnpd.conf)
+if [ -n "$minissdpd_socket" ]; then
+	rm -f "$minissdpd_socket"
+	python3 -c '
+import socket, sys
+# holding the SSDP port makes the daemon fall back to minissdpd
+ssdp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+ssdp.bind(("0.0.0.0", 1900))
+server = socket.socket(socket.AF_UNIX)
+server.bind(sys.argv[1])
+server.listen(4)
+while True:
+    connection = server.accept()[0]
+    with open("/tmp/minissdpd.received", "ab") as received:
+        received.write(connection.recv(4096))
+    connection.close()
+' "$minissdpd_socket" &
+	sleep 0.5
+fi
+# an --https build needs a certificate at start, also without https_port
+if [ "${PCP_TEST_CONF_REPLACE:-0}" = 1 ] && command -v openssl >/dev/null; then
+	openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=router -days 2 \
+		-keyout /etc/miniupnpd/private-key.pem -out /etc/miniupnpd/certificate.pem 2>/dev/null
+fi
+if [ "${PCP_TEST_REAL_WAN:-0}" = 1 ] && nft list table inet filter >/dev/null 2>&1; then
 	# Return packets are part of established flows; new inbound traffic still
 	# needs the mapping/pinhole rule and the forward chain retains policy drop.
 	nft insert rule inet filter forward ct state established,related accept
