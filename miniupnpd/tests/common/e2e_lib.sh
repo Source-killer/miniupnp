@@ -242,7 +242,7 @@ e2e_router_policy() {
 }
 
 # e2e_case_rows FAMILY: "section<TAB>case<TAB>flag" for every case that runs on FAMILY (the flag of
-# pcp_e2e is nat66).
+# pcp_e2e is nat66, of upnp_e2e restart).
 e2e_case_rows() {
   # shellcheck disable=SC2086 # E2E_RUNNER_ARGS is a list of options
   "$DOCKER" run --rm --volume "$ROOT/miniupnpd/tests:/pcp-tests:ro" --entrypoint python3 "$IMAGE" \

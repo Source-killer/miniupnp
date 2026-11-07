@@ -1988,6 +1988,10 @@ class DescriptionTests(unittest.TestCase):
         values = lib_test.scpd_values(SCPD.encode())
         self.assertEqual(values["scpd.evented"], ["ExternalIPAddress"])
         self.assertEqual(values["scpd.args.GetExternalIPAddress"], ["NewExternalIPAddress"])
+        self.assertEqual(values["scpd.directions.GetExternalIPAddress"], ["out"])
+        self.assertEqual(values["scpd.type.ExternalIPAddress"], "string")
+        self.assertEqual(values["scpd.allowed.ExternalIPAddress"], [])
+        self.assertEqual(values["scpd.range.ExternalIPAddress"], [None, None])
 
     def test_fetch_from_a_server(self):
         igd = FakeIgd()
@@ -2161,6 +2165,19 @@ class UpnpStepTests(unittest.TestCase):
             with self.assertRaisesRegex(AssertionError, "did not restart"):
                 self.sequence([{"kind": "restart"}])
             thread.join()
+
+    def test_placeholders_are_filled_at_any_depth(self):
+        corpus = {"a": ["@X@.2", {"b": "http://@X@.2/"}], "n": 3}
+        self.assertEqual(lib_test.fill_placeholders(corpus, {"@X@": "10.0"}), {"a": ["10.0.2", {"b": "http://10.0.2/"}], "n": 3})
+
+    def test_select_build_cases_rejects_a_case_of_no_build(self):
+        corpus = {"builds": {"igd1": {}, "igd2": {}}, "sections": [{"name": "S", "cases": [
+            {"name": "a", "builds": ["igd1"]}, {"name": "b"}]}]}
+        args = SimpleNamespace(build="igd2", family="ipv4", case=["b"])
+        self.assertEqual([case["name"] for case in lib_test.select_build_cases(corpus, args, dict)], ["b"])
+        args.case = ["b", "typo"]
+        with self.assertRaisesRegex(lib_test.CorpusError, "typo"):
+            lib_test.select_build_cases(corpus, args, dict)
 
     @staticmethod
     def answer_router_call(directory, text):
