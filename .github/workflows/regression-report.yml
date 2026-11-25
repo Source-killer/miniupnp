@@ -3,7 +3,8 @@ name: 'miniupnpd: Regression report'
 
 # Posts the result of a regression-testing.yml run on its pull request, as one review
 # (event COMMENT): the regressions and improvements of each comparison, from the
-# review-* artifact of each comparison job (its review.md alone, not the logs).
+# review-* artifact of each comparison job (its review.md alone, not the logs). The
+# comparisons without a change share one line.
 #
 # A separate workflow, as the run of a fork's pull request has a read-only token. This
 # one runs master's copy with a write token and runs no code of the pull request: it
@@ -64,21 +65,62 @@ jobs:
             echo "pull request #$number moved on to $pr_head; its own run reports that commit"
             exit 0
           fi
-          {
-            echo "## Regression testing: $CONCLUSION"
-            echo
-            echo "Master's daemon against \`${HEAD_SHA:0:12}\`. Full tables, logs and captures: [the run]($RUN_URL)."
-            echo
-            find artifacts -name review.md | sort | while read -r file; do
-              cat "$file"
-              echo
-            done
-          } > body.md
+          python3 - <<'EOF' > body.md
+          import os, re
+          from pathlib import Path
+
+          # artifacts/review-<module>-<platform>/review.md: empty when nothing changed, else the
+          # counts on the first line ("Regressions: N. Improvements: M." or "Incomplete
+          # comparison.") and the tool's <details> boxes
+          modules = {}
+          for path in sorted(Path('artifacts').glob('review-*/review.md')):
+              name = path.parent.name[len('review-'):]
+              for os_name in ('linux', 'freebsd', 'openbsd'):    # upnp-wire-linux: upnp-wire, linux
+                  if f'-{os_name}' in name:
+                      module, platform = name.split(f'-{os_name}', 1)
+                      platform = os_name + platform
+                      break
+              modules.setdefault(module, []).append((platform, path.read_text()))
+
+          def counts(text):
+              found = re.match(r'Regressions: (\d+)\. Improvements: (\d+)\.', text)
+              return (int(found[1]), int(found[2])) if found else (None, None)
+
+          def summary(regressions, improvements):
+              if regressions is None:
+                  return 'incomplete comparison'
+              if not regressions and not improvements:
+                  return 'no changes'
+              return f'{regressions} regressions, {improvements} improvements'
+
+          def body(full):
+              out = [f"## Regression testing: {os.environ['CONCLUSION']}", '',
+                     f"Master's daemon against `{os.environ['HEAD_SHA'][:12]}`. Full tables, logs and "
+                     f"captures: [the run]({os.environ['RUN_URL']}).", '']
+              for module, platforms in sorted(modules.items()):
+                  changed = [(platform, text) for platform, text in platforms if text.strip()]
+                  clean = [platform for platform, text in platforms if not text.strip()]
+                  totals = [counts(text) for _, text in changed]
+                  incomplete = any(r is None for r, _ in totals)
+                  regressions = sum(r for r, _ in totals if r is not None)
+                  improvements = sum(i for r, i in totals if r is not None)
+                  out += ['<details open>' if incomplete or regressions else '<details>',
+                          f'<summary><b>{module}</b>: {"incomplete comparison" if incomplete else summary(regressions, improvements)}</summary>',
+                          '']
+                  if clean:
+                      out += [f'No changes: {", ".join(clean)}.', '']
+                  for platform, text in changed:
+                      r, i = counts(text)
+                      out += ['<details open>' if r is None or r else '<details>',
+                              f'<summary>{platform}: {summary(r, i)}</summary>', '',
+                              (text.split('\n', 2)[2] if r is not None else text) if full
+                              else '(Too long for a review: see the run.)', '', '</details>', '']
+                  out += ['</details>', '']
+              return '\n'.join(out)
+
+          text = body(True)
           # a review body holds at most 65536 characters
-          if [ "$(wc -c < body.md)" -gt 60000 ]; then
-            head -c 60000 body.md > short.md
-            printf '\n\n(Cut short: see [the run](%s).)\n' "$RUN_URL" >> short.md
-            mv short.md body.md
-          fi
+          print(text if len(text) < 60000 else body(False))
+          EOF
           gh api --method POST "repos/$REPOSITORY/pulls/$number/reviews" \
             -f commit_id="$HEAD_SHA" -f event=COMMENT -F body=@body.md
