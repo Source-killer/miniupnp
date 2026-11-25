@@ -4,7 +4,8 @@ name: 'miniupnpd: Regression report'
 # Posts the result of a regression-testing.yml run on its pull request, as one review
 # (event COMMENT): the regressions and improvements of each comparison, from the
 # review-* artifact of each comparison job (its review.md alone, not the logs). The
-# comparisons without a change share one line.
+# comparisons without a change share one line. A table of the totals comes first, the
+# boxes of each module and platform under "Show details".
 #
 # A separate workflow, as the run of a fork's pull request has a read-only token. This
 # one runs master's copy with a write token and runs no code of the pull request: it
@@ -69,9 +70,9 @@ jobs:
           import os, re
           from pathlib import Path
 
-          # artifacts/review-<module>-<platform>/review.md: empty when nothing changed, else the
-          # counts on the first line ("Regressions: N. Improvements: M." or "Incomplete
-          # comparison.") and the tool's <details> boxes
+          # artifacts/review-<module>-<platform>/review.md: the counts on the first line
+          # ("Regressions: N. Improvements: M. Unchanged: K." or "Incomplete comparison.")
+          # and the tool's <details> boxes
           modules = {}
           for path in sorted(Path('artifacts').glob('review-*/review.md')):
               name = path.parent.name[len('review-'):]
@@ -80,42 +81,47 @@ jobs:
                       module, platform = name.split(f'-{os_name}', 1)
                       platform = os_name + platform
                       break
-              modules.setdefault(module, []).append((platform, path.read_text()))
+              text = path.read_text()
+              found = re.match(r'Regressions: (\d+)\. Improvements: (\d+)\. Unchanged: (\d+)\.', text)
+              counts = tuple(int(n) for n in found.groups()) if found else None
+              modules.setdefault(module, []).append((platform, counts, ''.join(text.split('\n', 2)[2:]) if found else text))
 
-          def counts(text):
-              found = re.match(r'Regressions: (\d+)\. Improvements: (\d+)\.', text)
-              return (int(found[1]), int(found[2])) if found else (None, None)
-
-          def summary(regressions, improvements):
-              if regressions is None:
+          def summary(counts):
+              if counts is None:
                   return 'incomplete comparison'
+              regressions, improvements, _ = counts
               if not regressions and not improvements:
                   return 'no changes'
               return f'{regressions} regressions, {improvements} improvements'
 
           def body(full):
+              runs = [run for platforms in modules.values() for run in platforms]
+              total = [sum(c[n] for _, c, _ in runs if c) for n in range(3)]
+              incomplete = [f'{m} {p}' for m, platforms in sorted(modules.items()) for p, c, _ in platforms if c is None]
               out = [f"## Regression testing: {os.environ['CONCLUSION']}", '',
-                     f"Master's daemon against `{os.environ['HEAD_SHA'][:12]}`. Full tables, logs and "
-                     f"captures: [the run]({os.environ['RUN_URL']}).", '']
+                     '| | Improvements | Regressions | Unchanged |', '|:--|--:|--:|--:|',
+                     f'| Cases | {total[1]} | {total[0]} | {total[2]} |', '']
+              if incomplete:
+                  out += [f'Incomplete comparisons: {", ".join(incomplete)}.', '']
+              out += [f"Master's daemon against `{os.environ['HEAD_SHA'][:12]}`. Full tables, logs and "
+                      f"captures: [the run]({os.environ['RUN_URL']}).", '',
+                      '<details>', '<summary>Show details</summary>', '']
               for module, platforms in sorted(modules.items()):
-                  changed = [(platform, text) for platform, text in platforms if text.strip()]
-                  clean = [platform for platform, text in platforms if not text.strip()]
-                  totals = [counts(text) for _, text in changed]
-                  incomplete = any(r is None for r, _ in totals)
-                  regressions = sum(r for r, _ in totals if r is not None)
-                  improvements = sum(i for r, i in totals if r is not None)
-                  out += ['<details open>' if incomplete or regressions else '<details>',
-                          f'<summary><b>{module}</b>: {"incomplete comparison" if incomplete else summary(regressions, improvements)}</summary>',
-                          '']
+                  clean = [p for p, c, _ in platforms if c and not c[0] and not c[1]]
+                  changed = [(p, c, text) for p, c, text in platforms if p not in clean]
+                  open_box = any(c is None or c[0] for _, c, _ in changed)
+                  shown = ('incomplete comparison' if any(c is None for _, c, _ in changed)
+                           else summary(tuple(sum(c[n] for _, c, _ in changed) for n in range(3))))
+                  out += ['<details open>' if open_box else '<details>',
+                          f'<summary><b>{module}</b>: {shown}</summary>', '']
                   if clean:
                       out += [f'No changes: {", ".join(clean)}.', '']
-                  for platform, text in changed:
-                      r, i = counts(text)
-                      out += ['<details open>' if r is None or r else '<details>',
-                              f'<summary>{platform}: {summary(r, i)}</summary>', '',
-                              (text.split('\n', 2)[2] if r is not None else text) if full
-                              else '(Too long for a review: see the run.)', '', '</details>', '']
+                  for platform, c, text in changed:
+                      out += ['<details open>' if c is None or c[0] else '<details>',
+                              f'<summary>{platform}: {summary(c)}</summary>', '',
+                              text if full else '(Too long for a review: see the run.)', '', '</details>', '']
                   out += ['</details>', '']
+              out += ['</details>', '']
               return '\n'.join(out)
 
           text = body(True)
