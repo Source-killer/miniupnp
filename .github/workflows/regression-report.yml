@@ -77,8 +77,9 @@ jobs:
           # ("Regressions: N. Improvements: M. New coverage: C. Other changes: O. Unchanged: K."
           # or "Incomplete comparison.")
           # and the tool's <details> boxes
-          # the shown name of a module: the PCP/NAT-PMP suites run as wire and end2end
-          NAMES = {'end2end': 'PCP/NAT-PMP e2e', 'wire': 'PCP/NAT-PMP wire'}
+          # the shown name of a module (its artifact's name before the platform)
+          NAMES = {'end2end': 'PCP/NAT-PMP e2e', 'wire': 'PCP/NAT-PMP wire', 'options': 'Daemon options',
+                   'upnp-e2e': 'UPnP e2e', 'upnp-wire': 'UPnP wire'}
           modules = {}
           for path in sorted(Path('artifacts').glob('review-*/review.md')):
               name = path.parent.name[len('review-'):]
