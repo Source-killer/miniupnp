@@ -108,7 +108,8 @@ class ReportTests(unittest.TestCase):
                       ('ipv4', 'pcp', 'unblocked'): {'status': 'FAIL', 'detail': 'gap'}}, 'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. New coverage: 1. Unchanged: 1.\n\n'
+        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. New coverage: 1. Other changes: 0. '
+                                        'Unchanged: 1.\n\n'
                                         '<details open>\n'
                                         '<summary>Regressions: 1 case</summary>\n\n'))
         self.assertIn('| pcp/lost | PASS | FAIL | timeout | ipv4 |', text)
@@ -134,7 +135,38 @@ class ReportTests(unittest.TestCase):
                    ('ipv4', 'pcp', 'b'): {'status': 'SKIP', 'detail': 'excluded by --family filter'}}, 'same')
         with tempfile.TemporaryDirectory() as temporary:
             self.assertEqual(review(Path(temporary), result, result),
-                             'Regressions: 0. Improvements: 0. New coverage: 0. Unchanged: 1.\n')
+                             'Regressions: 0. Improvements: 0. New coverage: 0. Other changes: 0. Unchanged: 1.\n')
+
+    def test_the_review_lists_other_changes(self):
+        master = ({('ipv4', 'pcp', 'known'): {'status': 'FAIL', 'detail': 'gap'}}, 'digest')
+        candidate = ({('ipv4', 'pcp', 'known'): {'status': 'XFAIL', 'detail': 'no feature'}}, 'digest')
+        with tempfile.TemporaryDirectory() as temporary:
+            text = review(Path(temporary), master, candidate)
+        self.assertIn('Other changes: 1.', text)
+        self.assertIn('| pcp/known | FAIL | XFAIL | no feature | ipv4 |', text)
+
+    def test_the_review_reproduces_the_changed_cases_where_the_suite_runs(self):
+        master = ({('ipv4', 'upnp', 'b'): {'status': 'PASS', 'detail': ''},
+                   ('ipv6', 'upnp', 'a'): {'status': 'PASS', 'detail': ''},
+                   ('ipv4', 'upnp', 'same'): {'status': 'PASS', 'detail': ''}}, 'digest')
+        candidate = ({('ipv4', 'upnp', 'b'): {'status': 'FAIL', 'detail': 'x'},
+                      ('ipv6', 'upnp', 'a'): {'status': 'FAIL', 'detail': 'x'},
+                      ('ipv4', 'upnp', 'same'): {'status': 'PASS', 'detail': ''}}, 'digest')
+        suite = SimpleNamespace(SUITE='upnp-wire', PLATFORMS=('linux',))
+        commits = {'master': 'aaa', 'candidate': 'bbb'}
+        for platform, shown in (('linux', True), ('freebsd', False)):
+            args = SimpleNamespace(platform=platform, results=None)
+            with tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    compare.make_report(root, commits, {'master': master, 'candidate': candidate}, [], 'T', suite,
+                                        args)
+                text = (root / 'review.md').read_text()
+            self.assertEqual('<summary>Reproduce locally</summary>' in text, shown)
+            if shown:
+                self.assertIn('git worktree add --detach .tmp/compare-candidate bbb\n', text)
+                self.assertIn('--suite upnp-wire --platform linux', text)
+                self.assertIn('--output .tmp/compare-output --case a --case b\n', text)
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {

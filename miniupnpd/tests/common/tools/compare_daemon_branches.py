@@ -11,6 +11,7 @@ import argparse
 import importlib.util
 import io
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -111,10 +112,25 @@ def grouped_table(label, keys, before, after, open_box):
               for (case, master, candidate, detail), families in rows.items()), '', '</details>', '']
 
 
+def review_reproduce(commits, suite, args, keys):
+    """A <details> box with the commands which compare the changed cases again, on a machine with this
+    harness; nothing for a platform the suite does not run on (the FreeBSD wire run reads --results)."""
+    if not keys or suite is None or args is None or args.platform not in suite.PLATFORMS:
+        return []
+    cases = ''.join(' --case ' + shlex.quote(name) for name in sorted({key[2] for key in keys}))
+    return ['<details>', '<summary>Reproduce locally</summary>', '', '```sh',
+            'git worktree add --detach .tmp/compare-master ' + shlex.quote(commits.get('master', 'MASTER_COMMIT')),
+            'git worktree add --detach .tmp/compare-candidate ' + shlex.quote(commits.get('candidate', 'PR_COMMIT')),
+            f'python3 miniupnpd/tests/common/tools/compare_daemon_branches.py --suite {shlex.quote(suite.SUITE)} '
+            f'--platform {shlex.quote(args.platform)} \\',
+            '  --master-source .tmp/compare-master --candidate-source .tmp/compare-candidate \\',
+            '  --output .tmp/compare-output' + cases, '```', '', '</details>', '']
+
+
 def make_report(output, commits, runs, errors, title, suite=None, args=None):
-    """summary.md, and review.md: the counts, regressions, improvements and new coverage alone, for the
-    review the workflow posts on the pull request: the counts on its first line (unchanged leaves out
-    the cases a filter skipped), then a <details> box per list. The exit code: 0 no regression,
+    """summary.md, and review.md: the counts and the changed cases alone, for the review the workflow
+    posts on the pull request: the counts on its first line (unchanged leaves out the cases a filter
+    skipped), then a <details> box per kind of change and one to reproduce them. The exit code: 0 no regression,
     1 regressions, 2 an incomplete comparison. The suite adds its header lines and how to reproduce the
     comparison (not for --results), its notes and a column of per-case links."""
     ran = suite is not None and args is not None and not args.results
@@ -144,6 +160,7 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     regressions = [key for key, kind in transitions if kind == 'regression']
     improvements = [key for key, kind in transitions if kind == 'improvement']
     new_coverage = [key for key, kind in transitions if kind == 'new coverage']
+    other = [key for key, kind in transitions if kind == 'changed']
     print(f'Regressions: {len(regressions)}. Improvements: {len(improvements)}.', flush=True)
     for label, keys in (('REGRESSION', regressions), ('IMPROVEMENT', improvements)):
         for key in keys:
@@ -172,10 +189,12 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
                     and not is_filtered_skip(after[key]['status'], after[key]['detail']))
     (output / 'review.md').write_text('\n'.join(
         [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. New coverage: {len(new_coverage)}. '
-         f'Unchanged: {unchanged}.', '',
+         f'Other changes: {len(other)}. Unchanged: {unchanged}.', '',
          *grouped_table('Regressions', regressions, before, after, True),
          *grouped_table('Improvements', improvements, before, after, False),
-         *grouped_table('New coverage', new_coverage, before, after, False)]))
+         *grouped_table('New coverage', new_coverage, before, after, False),
+         *grouped_table('Other changes', other, before, after, False),
+         *review_reproduce(commits, suite, args, regressions + improvements + new_coverage + other)]))
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
     lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change |' + column,
