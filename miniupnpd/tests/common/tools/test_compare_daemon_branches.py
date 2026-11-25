@@ -100,17 +100,22 @@ class ReportTests(unittest.TestCase):
         unchanged = {'status': 'FAIL', 'detail': 'old'}
         master = ({('ipv4', 'pcp', 'fixed'): {'status': 'XFAIL', 'detail': 'no feature'},
                    ('ipv4', 'pcp', 'lost'): {'status': 'PASS', 'detail': ''},
-                   ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
+                   ('ipv4', 'pcp', 'known'): unchanged,
+                   ('ipv4', 'pcp', 'unblocked'): {'status': 'SKIP', 'detail': 'prerequisite did not pass'}}, 'digest')
         candidate = ({('ipv4', 'pcp', 'fixed'): {'status': 'PASS', 'detail': ''},
                       ('ipv4', 'pcp', 'lost'): {'status': 'FAIL', 'detail': 'timeout'},
-                      ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
+                      ('ipv4', 'pcp', 'known'): unchanged,
+                      ('ipv4', 'pcp', 'unblocked'): {'status': 'FAIL', 'detail': 'gap'}}, 'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. Unchanged: 1.\n\n<details open>\n'
+        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. New coverage: 1. Unchanged: 1.\n\n'
+                                        '<details open>\n'
                                         '<summary>Regressions: 1 case</summary>\n\n'))
         self.assertIn('| pcp/lost | PASS | FAIL | timeout | ipv4 |', text)
         self.assertIn('<details>\n<summary>Improvements: 1 case</summary>\n\n', text)
         self.assertIn('| pcp/fixed | XFAIL | PASS |  | ipv4 |', text)
+        self.assertIn('<details>\n<summary>New coverage: 1 case</summary>\n\n', text)
+        self.assertIn('| pcp/unblocked | SKIP | FAIL | gap | ipv4 |', text)
         self.assertNotIn('known', text)
 
     def test_the_review_has_one_row_per_case_and_outcome(self):
@@ -129,7 +134,7 @@ class ReportTests(unittest.TestCase):
                    ('ipv4', 'pcp', 'b'): {'status': 'SKIP', 'detail': 'excluded by --family filter'}}, 'same')
         with tempfile.TemporaryDirectory() as temporary:
             self.assertEqual(review(Path(temporary), result, result),
-                             'Regressions: 0. Improvements: 0. Unchanged: 1.\n')
+                             'Regressions: 0. Improvements: 0. New coverage: 0. Unchanged: 1.\n')
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {

@@ -112,11 +112,11 @@ def grouped_table(label, keys, before, after, open_box):
 
 
 def make_report(output, commits, runs, errors, title, suite=None, args=None):
-    """summary.md, and review.md: the counts, regressions and improvements alone, for the review the
-    workflow posts on the pull request: the counts on its first line (unchanged leaves out the cases
-    a filter skipped), then a <details> box per list. The exit code: 0 no regression, 1 regressions, 2 an incomplete
-    comparison. The suite adds its header lines and how to reproduce the comparison (not for
-    --results), its notes and a column of per-case links."""
+    """summary.md, and review.md: the counts, regressions, improvements and new coverage alone, for the
+    review the workflow posts on the pull request: the counts on its first line (unchanged leaves out
+    the cases a filter skipped), then a <details> box per list. The exit code: 0 no regression,
+    1 regressions, 2 an incomplete comparison. The suite adds its header lines and how to reproduce the
+    comparison (not for --results), its notes and a column of per-case links."""
     ran = suite is not None and args is not None and not args.results
     header = suite.report_header(args) if ran and hasattr(suite, 'report_header') else []
     reproduce = suite.reproduce(commits, args) if ran and hasattr(suite, 'reproduce') else []
@@ -143,6 +143,7 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     counts = Counter(kind for _, kind in transitions)
     regressions = [key for key, kind in transitions if kind == 'regression']
     improvements = [key for key, kind in transitions if kind == 'improvement']
+    new_coverage = [key for key, kind in transitions if kind == 'new coverage']
     print(f'Regressions: {len(regressions)}. Improvements: {len(improvements)}.', flush=True)
     for label, keys in (('REGRESSION', regressions), ('IMPROVEMENT', improvements)):
         for key in keys:
@@ -170,9 +171,11 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     unchanged = sum(1 for key, kind in transitions if kind == 'unchanged'
                     and not is_filtered_skip(after[key]['status'], after[key]['detail']))
     (output / 'review.md').write_text('\n'.join(
-        [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. Unchanged: {unchanged}.', '',
+        [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. New coverage: {len(new_coverage)}. '
+         f'Unchanged: {unchanged}.', '',
          *grouped_table('Regressions', regressions, before, after, True),
-         *grouped_table('Improvements', improvements, before, after, False)]))
+         *grouped_table('Improvements', improvements, before, after, False),
+         *grouped_table('New coverage', new_coverage, before, after, False)]))
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
     lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change |' + column,
