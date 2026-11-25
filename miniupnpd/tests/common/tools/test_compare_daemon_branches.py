@@ -191,6 +191,8 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(source('upnp/http', 'http')[1],
                              '[RFC9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)')
             self.assertEqual(source('upnp/old', 'old')[1], 'WANIPC1 §2.4')
+            self.assertEqual(compare.spec_cell('UDA-1.1 §2.1'), '[UDA-1.1 §2.1]'
+                             '(https://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.1.pdf)')
             self.assertEqual(source('upnp/gone', 'gone')[0], 'upnp/gone')
             with unittest.mock.patch.object(compare, 'HERE', root / 'common'), \
                  unittest.mock.patch.dict(os.environ, {}, clear=True):

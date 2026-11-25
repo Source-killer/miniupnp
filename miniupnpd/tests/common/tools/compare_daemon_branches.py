@@ -97,9 +97,12 @@ def change_table(heading, keys, before, after):
                                  after[key]['status'], cell(after[key]['detail']))) + ' |' for key in keys), '']
 
 
-# the UPnP documents of https://openconnectivity.org/developer/specifications/upnp-resources/upnp/
-# internet-gateway-device-igd-v-2-0/, by the prefix of a case's ref; refs of other documents stay text
+# the UPnP documents linked from https://openconnectivity.org/developer/specifications/upnp-resources/upnp/
+# (its IGD v2 page and its archive of device architectures), by the prefix of a case's ref; refs of other
+# documents (WANIPC1, IGD1, SOAP11 ...) stay text
 SPEC_PDFS = {
+    'UDA-1.0': 'http://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.0.pdf',
+    'UDA-1.1': 'https://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.1.pdf',
     'IGD2': 'http://upnp.org/specs/gw/UPnP-gw-InternetGatewayDevice-v2-Device.pdf',
     'WANIPC2': 'http://upnp.org/specs/gw/UPnP-gw-WANIPConnection-v2-Service.pdf',
     '6FC1': 'http://upnp.org/specs/gw/UPnP-gw-WANIPv6FirewallControl-v1-Service.pdf',
