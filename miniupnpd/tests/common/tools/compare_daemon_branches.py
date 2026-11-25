@@ -84,10 +84,21 @@ def compare_results(before, after):
     return [(key, transition(before[key]['status'], after[key]['status'])) for key in before]
 
 
+def change_table(heading, keys, before, after):
+    """The cases of one kind of change, as a markdown table under `heading`; nothing without cases."""
+    if not keys:
+        return []
+    return [heading, '', '| Family | Protocol / case | Master | Candidate | Candidate detail |',
+            '|:--|:--|:--|:--|:--|',
+            *('| ' + ' | '.join((cell(key[0]), cell(f'{key[1]}/{key[2]}'), before[key]['status'],
+                                 after[key]['status'], cell(after[key]['detail']))) + ' |' for key in keys), '']
+
+
 def make_report(output, commits, runs, errors, title, suite=None, args=None):
-    """summary.md; the exit code: 0 no regression, 1 regressions, 2 an incomplete comparison. The suite
-    adds its header lines and how to reproduce the comparison (not for --results), its notes and a
-    column of per-case links."""
+    """summary.md, and review.md: the counts, regressions and improvements alone, for the review the
+    workflow posts on the pull request. The exit code: 0 no regression, 1 regressions, 2 an incomplete
+    comparison. The suite adds its header lines and how to reproduce the comparison (not for
+    --results), its notes and a column of per-case links."""
     ran = suite is not None and args is not None and not args.results
     header = suite.report_header(args) if ran and hasattr(suite, 'report_header') else []
     reproduce = suite.reproduce(commits, args) if ran and hasattr(suite, 'reproduce') else []
@@ -102,6 +113,9 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
         lines += [f'- {cell(label)}: {cell(error)}' for label, error in errors]
         lines += ['', 'The comparison is incomplete and must not be treated as passing.', '', *reproduce]
         (output / 'summary.md').write_text('\n'.join(lines))
+        (output / 'review.md').write_text('\n'.join(
+            [f'### {title}', '', '**Incomplete comparison.**', '',
+             *(f'- {cell(label)}: {cell(error)}' for label, error in errors), '']))
         return 2
     before, before_digest = runs['master']
     after, after_digest = runs['candidate']
@@ -110,10 +124,12 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     transitions = compare_results(before, after)
     counts = Counter(kind for _, kind in transitions)
     regressions = [key for key, kind in transitions if kind == 'regression']
-    print(f'Regressions: {len(regressions)}', flush=True)
-    for key in regressions:
-        print(f"REGRESSION {key[0]} {key[1]}/{key[2]}: {before[key]['status']} -> {after[key]['status']}: "
-              f"{after[key]['detail']}", flush=True)
+    improvements = [key for key, kind in transitions if kind == 'improvement']
+    print(f'Regressions: {len(regressions)}. Improvements: {len(improvements)}.', flush=True)
+    for label, keys in (('REGRESSION', regressions), ('IMPROVEMENT', improvements)):
+        for key in keys:
+            print(f"{label} {key[0]} {key[1]}/{key[2]}: {before[key]['status']} -> {after[key]['status']}: "
+                  f"{after[key]['detail']}", flush=True)
     lines += [f'- Corpus SHA-256: `{before_digest}`', '',
               '| Run | PASS | FAIL | XFAIL | SKIP |', '|:--|--:|--:|--:|--:|']
     for label, results in (('Master', before), ('Candidate', after)):
@@ -121,7 +137,8 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
                          if not is_filtered_skip(item['status'], item['detail']))
         lines.append(f"| {label} | {totals['PASS']} | {totals['FAIL']} | {totals['XFAIL']} | {totals['SKIP']} |")
     notes = getattr(suite, 'NOTES', '')
-    lines += ['', f"Regressions: **{counts['regression']}**. Improvements: **{counts['improvement']}**.", '',
+    counted = f"Regressions: **{counts['regression']}**. Improvements: **{counts['improvement']}**."
+    lines += ['', counted, '',
               'Totals omit cases excluded by protocol, address family or case filters. '
               'Other skips remain counted.', '',
               'Existing master failures do not fail this comparison. A previously passing case that '
@@ -130,13 +147,12 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
               'dependencies are shown as new coverage, not established regressions.', '',
               'Download the workflow artifact for the run logs, status tables and JSON results.' +
               (' ' + notes if notes else ''), '', *reproduce]
-    if regressions:
-        lines += ['## Regressions', '', '| Family | Protocol / case | Master | Candidate | Candidate detail |',
-                  '|:--|:--|:--|:--|:--|']
-        lines += ['| ' + ' | '.join((cell(key[0]), cell(f'{key[1]}/{key[2]}'), before[key]['status'],
-                                     after[key]['status'], cell(after[key]['detail']))) + ' |'
-                  for key in regressions]
-        lines.append('')
+    lines += change_table('## Regressions', regressions, before, after)
+    lines += change_table('## Improvements', improvements, before, after)
+    (output / 'review.md').write_text('\n'.join(
+        [f'### {title}', '', counted, '',
+         *change_table('#### Regressions', regressions, before, after),
+         *change_table('#### Improvements', improvements, before, after)]))
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
     lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change |' + column,

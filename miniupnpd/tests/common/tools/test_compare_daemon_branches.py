@@ -43,6 +43,12 @@ def report(root, master, candidate, suite=None):
     return code, (root / 'summary.md').read_text(), out.getvalue()
 
 
+def review(root, master, candidate):
+    """The review.md of a report, with its summary.md and output left out."""
+    report(root, master, candidate)
+    return (root / 'review.md').read_text()
+
+
 class ClassificationTests(unittest.TestCase):
     def test_transitions(self):
         for after in ('FAIL', 'XFAIL', 'SKIP'):
@@ -69,11 +75,49 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             code, summary, out = report(Path(temporary), master, candidate)
         self.assertEqual(code, 1)
-        self.assertIn('Regressions: 1\nREGRESSION ipv4 pcp/lost: PASS -> FAIL: result code 8\n', out)
+        self.assertIn('Regressions: 1. Improvements: 0.\nREGRESSION ipv4 pcp/lost: PASS -> FAIL: result code 8\n',
+                      out)
         self.assertNotIn('known', out)
         self.assertIn('| ipv4 | pcp/lost | PASS | FAIL | result code 8 |', summary)
         self.assertLess(summary.index('## Regressions'), summary.index('## Case results'))
         self.assertIn('| Family | Protocol / case | Master | Candidate | Change |\n', summary)
+
+    def test_the_report_names_each_improvement(self):
+        master = ({('ipv4', 'pcp', 'fixed'): {'status': 'FAIL', 'detail': 'result code 8'},
+                   ('ipv4', 'pcp', 'lost'): {'status': 'PASS', 'detail': ''}}, 'digest')
+        candidate = ({('ipv4', 'pcp', 'fixed'): {'status': 'PASS', 'detail': ''},
+                      ('ipv4', 'pcp', 'lost'): {'status': 'FAIL', 'detail': 'timeout'}}, 'digest')
+        with tempfile.TemporaryDirectory() as temporary:
+            code, summary, out = report(Path(temporary), master, candidate)
+        self.assertEqual(code, 1)
+        self.assertIn('IMPROVEMENT ipv4 pcp/fixed: FAIL -> PASS: \n', out)
+        self.assertIn('## Improvements', summary)
+        self.assertLess(summary.index('## Regressions'), summary.index('## Improvements'))
+        self.assertLess(summary.index('## Improvements'), summary.index('## Case results'))
+        self.assertIn('| ipv4 | pcp/fixed | FAIL | PASS |  |', summary)
+
+    def test_the_review_holds_the_counts_and_both_lists_only(self):
+        unchanged = {'status': 'FAIL', 'detail': 'old'}
+        master = ({('ipv4', 'pcp', 'fixed'): {'status': 'XFAIL', 'detail': 'no feature'},
+                   ('ipv4', 'pcp', 'lost'): {'status': 'PASS', 'detail': ''},
+                   ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
+        candidate = ({('ipv4', 'pcp', 'fixed'): {'status': 'PASS', 'detail': ''},
+                      ('ipv4', 'pcp', 'lost'): {'status': 'FAIL', 'detail': 'timeout'},
+                      ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
+        with tempfile.TemporaryDirectory() as temporary:
+            text = review(Path(temporary), master, candidate)
+        self.assertTrue(text.startswith('### Stand-in (linux)\n\nRegressions: **1**. Improvements: **1**.\n'))
+        self.assertIn('#### Regressions', text)
+        self.assertIn('| ipv4 | pcp/lost | PASS | FAIL | timeout |', text)
+        self.assertIn('#### Improvements', text)
+        self.assertIn('| ipv4 | pcp/fixed | XFAIL | PASS |  |', text)
+        self.assertNotIn('known', text)
+
+    def test_a_review_without_changes_has_the_counts_only(self):
+        result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''}}, 'same')
+        with tempfile.TemporaryDirectory() as temporary:
+            text = review(Path(temporary), result, result)
+        self.assertEqual(text, '### Stand-in (linux)\n\nRegressions: **0**. Improvements: **0**.\n')
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {
@@ -115,6 +159,9 @@ class ReportTests(unittest.TestCase):
             root = Path(temporary)
             self.assertEqual(compare.make_report(root, {}, {}, [('master', 'build failed')], 'Stand-in'), 2)
             self.assertIn('build failed', (root / 'summary.md').read_text())
+            text = (root / 'review.md').read_text()
+        self.assertIn('**Incomplete comparison.**', text)
+        self.assertIn('- master: build failed', text)
 
 
 class StatusDataTests(unittest.TestCase):
