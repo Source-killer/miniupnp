@@ -115,9 +115,17 @@ jobs:
               runs = [run for platforms in modules.values() for run in platforms]
               total = [sum(c[n] for _, c, _ in runs if c) for n in range(5)]
               incomplete = [f'{m} {p}' for m, platforms in sorted(modules.items()) for p, c, _ in platforms if c is None]
-              conclusion = os.environ['CONCLUSION']
-              out = ['<!-- regression-report -->',
-                     f"## Regression testing: {latex(None if conclusion == 'success' else 'red', conclusion)}", '']
+              # the heading tells what the comparisons found; the run's conclusion only when it
+              # failed outside them (the self-tests, a job which wrote no review.md)
+              if total[0]:
+                  found = latex('red', plural(total[0], 'regression', 'regressions'))
+              elif incomplete:
+                  found = '⚠️ incomplete'
+              elif os.environ['CONCLUSION'] != 'success':
+                  found = '⚠️ ' + os.environ['CONCLUSION']
+              else:
+                  found = 'no regressions'
+              out = ['<!-- regression-report -->', f'## Regression testing: {found}', '']
               if incomplete:
                   out += [f'⚠️ Incomplete comparisons: {", ".join(incomplete)}.', '']
               out += ['| | ' + ' | '.join(latex(colour, name) for colour, name in (
