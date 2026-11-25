@@ -113,8 +113,8 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. New coverage: 1. Other changes: 0. '
                                         'Unchanged: 1.\n\n'
                                         '<details open>\n'
-                                        '<summary>Regressions: 1 case</summary>\n\n'))
-        self.assertIn('| pcp/lost |  | PASS | FAIL | timeout | ipv4 |', text)
+                                        '<summary>🔴 Regressions: 1 case</summary>\n\n'))
+        self.assertIn('| 🔴 pcp/lost |  | PASS | FAIL | timeout | ipv4 |', text)
         self.assertIn('<details>\n<summary>Improvements: 1 case</summary>\n\n', text)
         self.assertIn('| pcp/fixed |  | XFAIL | PASS |  | ipv4 |', text)
         self.assertIn('<details>\n<summary>New coverage: 1 case</summary>\n\n', text)
@@ -129,8 +129,8 @@ class ReportTests(unittest.TestCase):
                      'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertIn('| upnp/walk |  | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
-        self.assertIn('| upnp/walk |  | PASS | FAIL | timeout | igd2 ipv6 |', text)
+        self.assertIn('| 🔴 upnp/walk |  | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
+        self.assertIn('| 🔴 upnp/walk |  | PASS | FAIL | timeout | igd2 ipv6 |', text)
 
     def test_a_review_without_changes_has_the_counts_only(self):
         result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''},

@@ -156,9 +156,10 @@ def case_sources(commits, suite):
     return source
 
 
-def grouped_table(label, keys, before, after, open_box, source):
+def grouped_table(label, keys, before, after, open_box, source, mark=''):
     """As change_table, in a <details> box, one row per case and outcome: the families it holds for share
-    a cell. `source` gives the case and spec cells."""
+    a cell. `source` gives the case and spec cells; `mark` goes before the box's summary and each case
+    (the red mark the review puts on the way down to a regression)."""
     if not keys:
         return []
     rows = {}
@@ -167,9 +168,9 @@ def grouped_table(label, keys, before, after, open_box, source):
         rows.setdefault(row, []).append(key[0])
     cases = len({row[:2] for row in rows})
     return ['<details open>' if open_box else '<details>',
-            f'<summary>{label}: {cases} case{"s" if cases != 1 else ""}</summary>', '',
+            f'<summary>{mark}{label}: {cases} case{"s" if cases != 1 else ""}</summary>', '',
             '| Protocol / case | Spec | Master | Candidate | Detail | Families |', '|:--|:--|:--|:--|:--|:--|',
-            *('| ' + ' | '.join((*source(f'{protocol}/{name}', name), master, candidate, cell(detail),
+            *('| ' + mark + ' | '.join((*source(f'{protocol}/{name}', name), master, candidate, cell(detail),
                                  cell(', '.join(families)))) + ' |'
               for (protocol, name, master, candidate, detail), families in rows.items()), '', '</details>', '']
 
@@ -253,7 +254,7 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     (output / 'review.md').write_text('\n'.join(
         [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. New coverage: {len(new_coverage)}. '
          f'Other changes: {len(other)}. Unchanged: {unchanged}.', '',
-         *grouped_table('Regressions', regressions, before, after, True, source),
+         *grouped_table('Regressions', regressions, before, after, True, source, '🔴 '),
          *grouped_table('Improvements', improvements, before, after, False, source),
          *grouped_table('New coverage', new_coverage, before, after, False, source),
          *grouped_table('Other changes', other, before, after, False, source),
