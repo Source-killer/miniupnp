@@ -6,7 +6,7 @@ name: 'miniupnpd: Regression report'
 # review-* artifact of each comparison job (its review.md alone, not the logs). The
 # comparisons without a change share one line. A table of the totals comes first, the
 # boxes of each module and platform under "Show details". Colour follows ISA-101: normal
-# states stay gray or plain, red marks regressions down to their cases, amber an incomplete
+# states stay gray or plain, red marks regressions down to their cases, ⚠️ an incomplete
 # comparison. The earlier reports on the
 # pull request are hidden as outdated.
 #
@@ -118,11 +118,8 @@ jobs:
               conclusion = os.environ['CONCLUSION']
               out = ['<!-- regression-report -->',
                      f"## Regression testing: {latex(None if conclusion == 'success' else 'red', conclusion)}", '']
-              if total[0]:
-                  out += ['> [!CAUTION]', f'> {plural(total[0], "case", "cases")} passed with master and '
-                          f'{"fails" if total[0] == 1 else "fail"} with this pull request.', '']
               if incomplete:
-                  out += ['> [!WARNING]', f'> Incomplete comparisons: {", ".join(incomplete)}.', '']
+                  out += [f'⚠️ Incomplete comparisons: {", ".join(incomplete)}.', '']
               out += ['| | ' + ' | '.join(latex(colour, name) for colour, name in (
                           ('gray', 'Improvements'), ('red' if total[0] else 'gray', 'Regressions'), ('gray', 'New coverage'),
                           ('gray', 'Other'), ('gray', 'Unchanged'))) + ' |',
