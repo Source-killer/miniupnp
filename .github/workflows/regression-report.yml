@@ -5,7 +5,8 @@ name: 'miniupnpd: Regression report'
 # (event COMMENT): the changed cases of each comparison and how to reproduce them, from the
 # review-* artifact of each comparison job (its review.md alone, not the logs). The
 # comparisons without a change share one line. A table of the totals comes first, the
-# boxes of each module and platform under "Show details".
+# boxes of each module and platform under "Show details". The earlier reports on the
+# pull request are hidden as outdated.
 #
 # A separate workflow, as the run of a fork's pull request has a read-only token. This
 # one runs master's copy with a write token and runs no code of the pull request: it
@@ -99,7 +100,7 @@ jobs:
               runs = [run for platforms in modules.values() for run in platforms]
               total = [sum(c[n] for _, c, _ in runs if c) for n in range(5)]
               incomplete = [f'{m} {p}' for m, platforms in sorted(modules.items()) for p, c, _ in platforms if c is None]
-              out = [f"## Regression testing: {os.environ['CONCLUSION']}", '',
+              out = ['<!-- regression-report -->', f"## Regression testing: {os.environ['CONCLUSION']}", '',
                      '| | Improvements | Regressions | New coverage | Other | Unchanged |',
                      '|:--|--:|--:|--:|--:|--:|',
                      f'| Cases | {total[1]} | {total[0]} | {total[2]} | {total[3]} | {total[4]} |', '']
@@ -130,5 +131,13 @@ jobs:
           # a review body holds at most 65536 characters
           print(text if len(text) < 60000 else body(False))
           EOF
-          gh api --method POST "repos/$REPOSITORY/pulls/$number/reviews" \
-            -f commit_id="$HEAD_SHA" -f event=COMMENT -F body=@body.md
+          new=$(gh api --method POST "repos/$REPOSITORY/pulls/$number/reviews" \
+                  -f commit_id="$HEAD_SHA" -f event=COMMENT -F body=@body.md --jq .node_id)
+          # hide the earlier reports as outdated: only the newest is about the head
+          gh api --paginate "repos/$REPOSITORY/pulls/$number/reviews" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and .node_id != \"$new\"
+                         and (.body | startswith(\"<!-- regression-report -->\"))) | .node_id" |
+          while read -r id; do
+            gh api graphql -f id="$id" -f query='mutation($id: ID!) {
+              minimizeComment(input: {subjectId: $id, classifier: OUTDATED}) { clientMutationId } }' > /dev/null
+          done
