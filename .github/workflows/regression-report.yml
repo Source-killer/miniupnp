@@ -111,6 +111,10 @@ jobs:
               cells, not in <summary>."""
               return f'$\\color{{{colour}}}{{\\textsf{{{text}}}}}$' if colour else text
 
+          def indent(level):
+              """GitHub does not indent nested <details>, and HTML folds spaces: one em space per level."""
+              return '&emsp;' * level
+
           def body(full):
               runs = [run for platforms in modules.values() for run in platforms]
               total = [sum(c[n] for _, c, _ in runs if c) for n in range(5)]
@@ -143,13 +147,15 @@ jobs:
                   counts = (None if any(c is None for _, c, _ in changed)
                             else tuple(sum(c[n] for _, c, _ in changed) for n in range(5)))
                   out += ['<details open>' if open_box else '<details>',
-                          f'<summary>{mark(counts)}<b>{module}</b>: {summary(counts)}</summary>', '']
+                          f'<summary>{indent(1)}{mark(counts)}<b>{module}</b>: {summary(counts)}</summary>', '']
                   if clean:
                       out += [f'No changes: {", ".join(clean)}.', '']
                   for platform, c, text in changed:
                       out += ['<details open>' if c is None or c[0] else '<details>',
-                              f'<summary>{mark(c)}{platform}: {summary(c)}</summary>', '',
-                              text if full else '(Too long for a review: see the run.)', '', '</details>', '']
+                              f'<summary>{indent(2)}{mark(c)}{platform}: {summary(c)}</summary>', '',
+                              # the boxes of review.md sit one level deeper
+                              text.replace('<summary>', '<summary>' + indent(3)) if full
+                              else '(Too long for a review: see the run.)', '', '</details>', '']
                   out += ['</details>', '']
               out += ['</details>', '']
               return '\n'.join(out)
