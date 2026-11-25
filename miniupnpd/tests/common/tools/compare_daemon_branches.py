@@ -94,9 +94,27 @@ def change_table(heading, keys, before, after):
                                  after[key]['status'], cell(after[key]['detail']))) + ' |' for key in keys), '']
 
 
+def grouped_table(label, keys, before, after, open_box):
+    """As change_table, in a <details> box, one row per case and outcome: the families it holds for share
+    a cell."""
+    if not keys:
+        return []
+    rows = {}
+    for key in keys:
+        row = (f'{key[1]}/{key[2]}', before[key]['status'], after[key]['status'], after[key]['detail'])
+        rows.setdefault(row, []).append(key[0])
+    cases = len({row[0] for row in rows})
+    return ['<details open>' if open_box else '<details>',
+            f'<summary>{label}: {cases} case{"s" if cases != 1 else ""}</summary>', '',
+            '| Protocol / case | Master | Candidate | Detail | Families |', '|:--|:--|:--|:--|:--|',
+            *('| ' + ' | '.join((cell(case), master, candidate, cell(detail), cell(', '.join(families)))) + ' |'
+              for (case, master, candidate, detail), families in rows.items()), '', '</details>', '']
+
+
 def make_report(output, commits, runs, errors, title, suite=None, args=None):
     """summary.md, and review.md: the counts, regressions and improvements alone, for the review the
-    workflow posts on the pull request. The exit code: 0 no regression, 1 regressions, 2 an incomplete
+    workflow posts on the pull request: the counts on its first line, then a <details> box per list;
+    empty when nothing changed. The exit code: 0 no regression, 1 regressions, 2 an incomplete
     comparison. The suite adds its header lines and how to reproduce the comparison (not for
     --results), its notes and a column of per-case links."""
     ran = suite is not None and args is not None and not args.results
@@ -114,7 +132,7 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
         lines += ['', 'The comparison is incomplete and must not be treated as passing.', '', *reproduce]
         (output / 'summary.md').write_text('\n'.join(lines))
         (output / 'review.md').write_text('\n'.join(
-            [f'### {title}', '', '**Incomplete comparison.**', '',
+            ['Incomplete comparison.', '',
              *(f'- {cell(label)}: {cell(error)}' for label, error in errors), '']))
         return 2
     before, before_digest = runs['master']
@@ -150,9 +168,9 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     lines += change_table('## Regressions', regressions, before, after)
     lines += change_table('## Improvements', improvements, before, after)
     (output / 'review.md').write_text('\n'.join(
-        [f'### {title}', '', counted, '',
-         *change_table('#### Regressions', regressions, before, after),
-         *change_table('#### Improvements', improvements, before, after)]))
+        [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}.', '',
+         *grouped_table('Regressions', regressions, before, after, True),
+         *grouped_table('Improvements', improvements, before, after, False)]) if regressions or improvements else '')
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
     lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change |' + column,

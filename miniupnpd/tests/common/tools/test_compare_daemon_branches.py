@@ -106,18 +106,28 @@ class ReportTests(unittest.TestCase):
                       ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertTrue(text.startswith('### Stand-in (linux)\n\nRegressions: **1**. Improvements: **1**.\n'))
-        self.assertIn('#### Regressions', text)
-        self.assertIn('| ipv4 | pcp/lost | PASS | FAIL | timeout |', text)
-        self.assertIn('#### Improvements', text)
-        self.assertIn('| ipv4 | pcp/fixed | XFAIL | PASS |  |', text)
+        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1.\n\n<details open>\n'
+                                        '<summary>Regressions: 1 case</summary>\n\n'))
+        self.assertIn('| pcp/lost | PASS | FAIL | timeout | ipv4 |', text)
+        self.assertIn('<details>\n<summary>Improvements: 1 case</summary>\n\n', text)
+        self.assertIn('| pcp/fixed | XFAIL | PASS |  | ipv4 |', text)
         self.assertNotIn('known', text)
 
-    def test_a_review_without_changes_has_the_counts_only(self):
+    def test_the_review_has_one_row_per_case_and_outcome(self):
+        lost = {'status': 'FAIL', 'detail': 'fault 714'}
+        keys = [('igd1 ipv4', 'upnp', 'walk'), ('igd2 ipv4', 'upnp', 'walk'), ('igd2 ipv6', 'upnp', 'walk')]
+        master = ({key: {'status': 'PASS', 'detail': ''} for key in keys}, 'digest')
+        candidate = ({**{key: lost for key in keys[:2]}, keys[2]: {'status': 'FAIL', 'detail': 'timeout'}},
+                     'digest')
+        with tempfile.TemporaryDirectory() as temporary:
+            text = review(Path(temporary), master, candidate)
+        self.assertIn('| upnp/walk | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
+        self.assertIn('| upnp/walk | PASS | FAIL | timeout | igd2 ipv6 |', text)
+
+    def test_a_review_without_changes_is_empty(self):
         result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''}}, 'same')
         with tempfile.TemporaryDirectory() as temporary:
-            text = review(Path(temporary), result, result)
-        self.assertEqual(text, '### Stand-in (linux)\n\nRegressions: **0**. Improvements: **0**.\n')
+            self.assertEqual(review(Path(temporary), result, result), '')
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {
@@ -160,7 +170,7 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(compare.make_report(root, {}, {}, [('master', 'build failed')], 'Stand-in'), 2)
             self.assertIn('build failed', (root / 'summary.md').read_text())
             text = (root / 'review.md').read_text()
-        self.assertIn('**Incomplete comparison.**', text)
+        self.assertTrue(text.startswith('Incomplete comparison.\n'))
         self.assertIn('- master: build failed', text)
 
 
