@@ -1,0 +1,84 @@
+---
+name: 'miniupnpd: Regression report'
+
+# Posts the result of a regression-testing.yml run on its pull request, as one review
+# (event COMMENT): the regressions and improvements of each comparison, from the
+# review-* artifact of each comparison job (its review.md alone, not the logs).
+#
+# A separate workflow, as the run of a fork's pull request has a read-only token. This
+# one runs master's copy with a write token and runs no code of the pull request: it
+# reads the artifacts as data and checks the pull request's head is the tested commit.
+# The run is skipped for a push to master and for a cancelled run (a newer push of the
+# pull request has its own run).
+
+'on':
+  workflow_run:
+    workflows: ['miniupnpd: Regression testing']
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  review:
+    name: Post the regression report on the pull request
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      contains(fromJSON('["success", "failure"]'), github.event.workflow_run.conclusion)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - name: Download the pull request number
+        uses: actions/download-artifact@v8
+        with:
+          name: pull-request
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: artifacts/pull-request
+
+      - name: Download each comparison's review.md
+        uses: actions/download-artifact@v8
+        with:
+          pattern: review-*
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: artifacts
+
+      - name: Post the review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          number=$(cat artifacts/pull-request/pull-request-number)
+          if ! printf '%s\n' "$number" | grep -qxE '[0-9]+'; then
+            echo "::error::no pull request number in the run's artifacts"
+            exit 1
+          fi
+          pr_head=$(gh api "repos/$REPOSITORY/pulls/$number" --jq .head.sha)
+          if [ "$pr_head" != "$HEAD_SHA" ]; then
+            echo "pull request #$number moved on to $pr_head; its own run reports that commit"
+            exit 0
+          fi
+          {
+            echo "## Regression testing: $CONCLUSION"
+            echo
+            echo "Master's daemon against \`${HEAD_SHA:0:12}\`. Full tables, logs and captures: [the run]($RUN_URL)."
+            echo
+            find artifacts -name review.md | sort | while read -r file; do
+              cat "$file"
+              echo
+            done
+          } > body.md
+          # a review body holds at most 65536 characters
+          if [ "$(wc -c < body.md)" -gt 60000 ]; then
+            head -c 60000 body.md > short.md
+            printf '\n\n(Cut short: see [the run](%s).)\n' "$RUN_URL" >> short.md
+            mv short.md body.md
+          fi
+          gh api --method POST "repos/$REPOSITORY/pulls/$number/reviews" \
+            -f commit_id="$HEAD_SHA" -f event=COMMENT -F body=@body.md
