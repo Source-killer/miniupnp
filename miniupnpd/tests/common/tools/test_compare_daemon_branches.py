@@ -5,8 +5,10 @@ of ended runs, and finding the suites. Each suite's compare.py has a test_compar
 import contextlib
 import io
 import json
+import os
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -112,11 +114,11 @@ class ReportTests(unittest.TestCase):
                                         'Unchanged: 1.\n\n'
                                         '<details open>\n'
                                         '<summary>Regressions: 1 case</summary>\n\n'))
-        self.assertIn('| pcp/lost | PASS | FAIL | timeout | ipv4 |', text)
+        self.assertIn('| pcp/lost |  | PASS | FAIL | timeout | ipv4 |', text)
         self.assertIn('<details>\n<summary>Improvements: 1 case</summary>\n\n', text)
-        self.assertIn('| pcp/fixed | XFAIL | PASS |  | ipv4 |', text)
+        self.assertIn('| pcp/fixed |  | XFAIL | PASS |  | ipv4 |', text)
         self.assertIn('<details>\n<summary>New coverage: 1 case</summary>\n\n', text)
-        self.assertIn('| pcp/unblocked | SKIP | FAIL | gap | ipv4 |', text)
+        self.assertIn('| pcp/unblocked |  | SKIP | FAIL | gap | ipv4 |', text)
         self.assertNotIn('known', text)
 
     def test_the_review_has_one_row_per_case_and_outcome(self):
@@ -127,8 +129,8 @@ class ReportTests(unittest.TestCase):
                      'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertIn('| upnp/walk | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
-        self.assertIn('| upnp/walk | PASS | FAIL | timeout | igd2 ipv6 |', text)
+        self.assertIn('| upnp/walk |  | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
+        self.assertIn('| upnp/walk |  | PASS | FAIL | timeout | igd2 ipv6 |', text)
 
     def test_a_review_without_changes_has_the_counts_only(self):
         result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''},
@@ -143,7 +145,7 @@ class ReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
         self.assertIn('Other changes: 1.', text)
-        self.assertIn('| pcp/known | FAIL | XFAIL | no feature | ipv4 |', text)
+        self.assertIn('| pcp/known |  | FAIL | XFAIL | no feature | ipv4 |', text)
 
     def test_the_review_reproduces_the_changed_cases_where_the_suite_runs(self):
         master = ({('ipv4', 'upnp', 'b'): {'status': 'PASS', 'detail': ''},
@@ -167,6 +169,33 @@ class ReportTests(unittest.TestCase):
                 self.assertIn('git worktree add --detach .tmp/compare-candidate bbb\n', text)
                 self.assertIn('--suite upnp-wire --platform linux', text)
                 self.assertIn('--output .tmp/compare-output --case a --case b\n', text)
+
+    def test_the_review_links_the_case_and_its_spec(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'x').mkdir()
+            (root / 'x' / 'cases.yaml').write_text(
+                'groups:\n  - name: SOAP\n    cases:\n      - name: walk\n        ref: "WANIPC2 §2.5.17"\n'
+                '      - name: http\n        ref: "RFC9112 §2.2"\n      - name: old\n        ref: "WANIPC1 §2.4"\n')
+            index = compare.case_index(root / 'x' / 'cases.yaml')
+            self.assertEqual(index['walk'], (4, 'WANIPC2 §2.5.17'))
+            self.assertEqual(index['SOAP'], (2, ''))
+            suite = SimpleNamespace(DIR='x', CORPUS='cases.yaml')
+            environment = {'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_REPOSITORY': 'o/r'}
+            with unittest.mock.patch.object(compare, 'HERE', root / 'common'), \
+                 unittest.mock.patch.dict(os.environ, environment):
+                source = compare.case_sources({'candidate': 'bbb'}, suite)
+            self.assertEqual(source('upnp/walk', 'walk'), (
+                '[upnp/walk](https://github.com/o/r/blob/bbb/miniupnpd/tests/x/cases.yaml#L4)',
+                '[WANIPC2 §2.5.17](http://upnp.org/specs/gw/UPnP-gw-WANIPConnection-v2-Service.pdf)'))
+            self.assertEqual(source('upnp/http', 'http')[1],
+                             '[RFC9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)')
+            self.assertEqual(source('upnp/old', 'old')[1], 'WANIPC1 §2.4')
+            self.assertEqual(source('upnp/gone', 'gone')[0], 'upnp/gone')
+            with unittest.mock.patch.object(compare, 'HERE', root / 'common'), \
+                 unittest.mock.patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(compare.case_sources({'candidate': 'bbb'}, suite)('upnp/walk', 'walk')[0],
+                                 'upnp/walk')
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {

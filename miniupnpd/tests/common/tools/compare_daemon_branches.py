@@ -11,6 +11,8 @@ import argparse
 import importlib.util
 import io
 import json
+import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -95,21 +97,78 @@ def change_table(heading, keys, before, after):
                                  after[key]['status'], cell(after[key]['detail']))) + ' |' for key in keys), '']
 
 
-def grouped_table(label, keys, before, after, open_box):
+# the UPnP documents of https://openconnectivity.org/developer/specifications/upnp-resources/upnp/
+# internet-gateway-device-igd-v-2-0/, by the prefix of a case's ref; refs of other documents stay text
+SPEC_PDFS = {
+    'IGD2': 'http://upnp.org/specs/gw/UPnP-gw-InternetGatewayDevice-v2-Device.pdf',
+    'WANIPC2': 'http://upnp.org/specs/gw/UPnP-gw-WANIPConnection-v2-Service.pdf',
+    '6FC1': 'http://upnp.org/specs/gw/UPnP-gw-WANIPv6FirewallControl-v1-Service.pdf',
+    'L3F1': 'http://upnp.org/specs/gw/UPnP-gw-Layer3Forwarding-v1-Service.pdf',
+    'WANCIC1': 'http://upnp.org/specs/gw/UPnP-gw-WANCommonInterfaceConfig-v1-Service.pdf',
+}
+
+
+def case_index(corpus):
+    """name: (line, ref) of each case of a corpus, read as text: the line of its '- name:', and the
+    'ref:' under it if any."""
+    index, name = {}, None
+    for number, line in enumerate(corpus.read_text().splitlines(), 1):
+        found = re.match(r'\s*- name: *"?([^"\s]+)"?\s*$', line)
+        if found:
+            name = found[1]
+            index.setdefault(name, (number, ''))
+            continue
+        found = re.match(r'\s+ref: *"([^"]*)"', line)
+        if found and name in index and not index[name][1]:
+            index[name] = (index[name][0], found[1])
+    return index
+
+
+def spec_cell(ref):
+    """The ref of a case, linked to its RFC section or to the UPnP document of its prefix."""
+    found = re.match(r'(\S+) §(\S+)', ref)
+    if not found:
+        return cell(ref)
+    rfc = re.fullmatch(r'RFC(\d+)', found[1])
+    if rfc:
+        return f'[{cell(ref)}](https://www.rfc-editor.org/rfc/rfc{rfc[1]}#section-{found[2]})'
+    if found[1] in SPEC_PDFS:
+        return f'[{cell(ref)}]({SPEC_PDFS[found[1]]})'
+    return cell(ref)
+
+
+def case_sources(commits, suite):
+    """For the review: a function giving the case cell (linked to the case's line in the corpus at the
+    candidate commit, in CI) and the spec cell of a case name."""
+    corpus = HERE.parent / suite.DIR / suite.CORPUS if hasattr(suite, 'DIR') else None    # suite may be None
+    index = case_index(corpus) if corpus and corpus.exists() else {}
+    server, repository = os.environ.get('GITHUB_SERVER_URL'), os.environ.get('GITHUB_REPOSITORY')
+    blob = (f'{server}/{repository}/blob/{commits["candidate"]}/{TESTS}/{suite.DIR}/{suite.CORPUS}'
+            if index and server and repository and 'candidate' in commits else None)
+
+    def source(text, name):
+        line, ref = index.get(name, (None, ''))
+        shown = f'[{cell(text)}]({blob}#L{line})' if blob and line else cell(text)
+        return shown, spec_cell(ref) if ref else ''
+    return source
+
+
+def grouped_table(label, keys, before, after, open_box, source):
     """As change_table, in a <details> box, one row per case and outcome: the families it holds for share
-    a cell."""
+    a cell. `source` gives the case and spec cells."""
     if not keys:
         return []
     rows = {}
     for key in keys:
-        row = (f'{key[1]}/{key[2]}', before[key]['status'], after[key]['status'], after[key]['detail'])
+        row = (key[1], key[2], before[key]['status'], after[key]['status'], after[key]['detail'])
         rows.setdefault(row, []).append(key[0])
-    cases = len({row[0] for row in rows})
+    cases = len({row[:2] for row in rows})
     return ['<details open>' if open_box else '<details>',
             f'<summary>{label}: {cases} case{"s" if cases != 1 else ""}</summary>', '',
-            '| Protocol / case | Master | Candidate | Detail | Families |', '|:--|:--|:--|:--|:--|',
-            *('| ' + ' | '.join((cell(case), master, candidate, cell(detail), cell(', '.join(families)))) + ' |'
-              for (case, master, candidate, detail), families in rows.items()), '', '</details>', '']
+            '| Protocol / case | Spec | Master | Candidate | Detail | Families |', '|:--|:--|:--|:--|:--|:--|',
+            *('| ' + ' | '.join((*source(f'{protocol}/{name}', name), master, candidate, cell(detail),
+                                 cell(', '.join(families)))) + ' |'
+              for (protocol, name, master, candidate, detail), families in rows.items()), '', '</details>', '']
 
 
 def review_reproduce(commits, suite, args, keys):
@@ -187,13 +246,14 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
     lines += change_table('## Improvements', improvements, before, after)
     unchanged = sum(1 for key, kind in transitions if kind == 'unchanged'
                     and not is_filtered_skip(after[key]['status'], after[key]['detail']))
+    source = case_sources(commits, suite)
     (output / 'review.md').write_text('\n'.join(
         [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. New coverage: {len(new_coverage)}. '
          f'Other changes: {len(other)}. Unchanged: {unchanged}.', '',
-         *grouped_table('Regressions', regressions, before, after, True),
-         *grouped_table('Improvements', improvements, before, after, False),
-         *grouped_table('New coverage', new_coverage, before, after, False),
-         *grouped_table('Other changes', other, before, after, False),
+         *grouped_table('Regressions', regressions, before, after, True, source),
+         *grouped_table('Improvements', improvements, before, after, False, source),
+         *grouped_table('New coverage', new_coverage, before, after, False, source),
+         *grouped_table('Other changes', other, before, after, False, source),
          *review_reproduce(commits, suite, args, regressions + improvements + new_coverage + other)]))
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
