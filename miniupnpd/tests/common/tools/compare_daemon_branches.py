@@ -113,8 +113,8 @@ def grouped_table(label, keys, before, after, open_box):
 
 def make_report(output, commits, runs, errors, title, suite=None, args=None):
     """summary.md, and review.md: the counts, regressions and improvements alone, for the review the
-    workflow posts on the pull request: the counts on its first line, then a <details> box per list;
-    empty when nothing changed. The exit code: 0 no regression, 1 regressions, 2 an incomplete
+    workflow posts on the pull request: the counts on its first line (unchanged leaves out the cases
+    a filter skipped), then a <details> box per list. The exit code: 0 no regression, 1 regressions, 2 an incomplete
     comparison. The suite adds its header lines and how to reproduce the comparison (not for
     --results), its notes and a column of per-case links."""
     ran = suite is not None and args is not None and not args.results
@@ -167,10 +167,12 @@ def make_report(output, commits, runs, errors, title, suite=None, args=None):
               (' ' + notes if notes else ''), '', *reproduce]
     lines += change_table('## Regressions', regressions, before, after)
     lines += change_table('## Improvements', improvements, before, after)
+    unchanged = sum(1 for key, kind in transitions if kind == 'unchanged'
+                    and not is_filtered_skip(after[key]['status'], after[key]['detail']))
     (output / 'review.md').write_text('\n'.join(
-        [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}.', '',
+        [f'Regressions: {len(regressions)}. Improvements: {len(improvements)}. Unchanged: {unchanged}.', '',
          *grouped_table('Regressions', regressions, before, after, True),
-         *grouped_table('Improvements', improvements, before, after, False)]) if regressions or improvements else '')
+         *grouped_table('Improvements', improvements, before, after, False)]))
     link = getattr(suite, 'case_link', None)
     column = f" {suite.LINK_COLUMN} |" if link else ''
     lines += ['## Case results', '', '| Family | Protocol / case | Master | Candidate | Change |' + column,

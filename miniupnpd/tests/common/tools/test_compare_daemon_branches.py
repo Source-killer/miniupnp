@@ -106,7 +106,7 @@ class ReportTests(unittest.TestCase):
                       ('ipv4', 'pcp', 'known'): unchanged}, 'digest')
         with tempfile.TemporaryDirectory() as temporary:
             text = review(Path(temporary), master, candidate)
-        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1.\n\n<details open>\n'
+        self.assertTrue(text.startswith('Regressions: 1. Improvements: 1. Unchanged: 1.\n\n<details open>\n'
                                         '<summary>Regressions: 1 case</summary>\n\n'))
         self.assertIn('| pcp/lost | PASS | FAIL | timeout | ipv4 |', text)
         self.assertIn('<details>\n<summary>Improvements: 1 case</summary>\n\n', text)
@@ -124,10 +124,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn('| upnp/walk | PASS | FAIL | fault 714 | igd1 ipv4, igd2 ipv4 |', text)
         self.assertIn('| upnp/walk | PASS | FAIL | timeout | igd2 ipv6 |', text)
 
-    def test_a_review_without_changes_is_empty(self):
-        result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''}}, 'same')
+    def test_a_review_without_changes_has_the_counts_only(self):
+        result = ({('ipv4', 'pcp', 'a'): {'status': 'PASS', 'detail': ''},
+                   ('ipv4', 'pcp', 'b'): {'status': 'SKIP', 'detail': 'excluded by --family filter'}}, 'same')
         with tempfile.TemporaryDirectory() as temporary:
-            self.assertEqual(review(Path(temporary), result, result), '')
+            self.assertEqual(review(Path(temporary), result, result),
+                             'Regressions: 0. Improvements: 0. Unchanged: 1.\n')
 
     def test_filtered_skips_are_hidden_but_prerequisites_remain(self):
         cases = {
