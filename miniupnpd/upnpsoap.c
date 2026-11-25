@@ -1199,7 +1199,7 @@ GetGenericPortMappingEntry(struct upnphttp * h, const char * action, const char 
 
 	if(r < 0)
 	{
-		SoapError(h, 713, "SpecifiedArrayIndexInvalid");
+		SoapError(h, 714, "NoSuchEntryInArray");
 	}
 	else
 	{
