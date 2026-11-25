@@ -112,18 +112,18 @@ SPEC_PDFS = {
 
 
 def case_index(corpus):
-    """name: (line, ref) of each case of a corpus, read as text: the line of its '- name:', and the
-    'ref:' under it if any."""
+    """name: (line, refs) of each case of a corpus, read as text: the line of its '- name:', and the
+    'ref:' under it if any, a string or a map by build ({igd1: "...", igd2: "..."})."""
     index, name = {}, None
     for number, line in enumerate(corpus.read_text().splitlines(), 1):
         found = re.match(r'\s*- name: *"?([^"\s]+)"?\s*$', line)
         if found:
             name = found[1]
-            index.setdefault(name, (number, ''))
+            index.setdefault(name, (number, ()))
             continue
-        found = re.match(r'\s+ref: *"([^"]*)"', line)
+        found = re.match(r'\s+ref: *(".*"|\{.*\})', line)
         if found and name in index and not index[name][1]:
-            index[name] = (index[name][0], found[1])
+            index[name] = (index[name][0], tuple(re.findall(r'"([^"]*)"', found[1])))
     return index
 
 
@@ -150,9 +150,9 @@ def case_sources(commits, suite):
             if index and server and repository and 'candidate' in commits else None)
 
     def source(text, name):
-        line, ref = index.get(name, (None, ''))
+        line, refs = index.get(name, (None, ()))
         shown = f'[{cell(text)}]({blob}#L{line})' if blob and line else cell(text)
-        return shown, spec_cell(ref) if ref else ''
+        return shown, ', '.join(spec_cell(ref) for ref in refs)
     return source
 
 

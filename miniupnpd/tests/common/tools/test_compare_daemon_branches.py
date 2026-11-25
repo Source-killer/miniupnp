@@ -176,10 +176,11 @@ class ReportTests(unittest.TestCase):
             (root / 'x').mkdir()
             (root / 'x' / 'cases.yaml').write_text(
                 'groups:\n  - name: SOAP\n    cases:\n      - name: walk\n        ref: "WANIPC2 §2.5.17"\n'
-                '      - name: http\n        ref: "RFC9112 §2.2"\n      - name: old\n        ref: "WANIPC1 §2.4"\n')
+                '      - name: http\n        ref: "RFC9112 §2.2"\n      - name: old\n        ref: "WANIPC1 §2.4"\n'
+                '      - name: both\n        ref: {igd1: "WANIPC1 §2.4.14", igd2: "WANIPC2 §2.5.14"}\n')
             index = compare.case_index(root / 'x' / 'cases.yaml')
-            self.assertEqual(index['walk'], (4, 'WANIPC2 §2.5.17'))
-            self.assertEqual(index['SOAP'], (2, ''))
+            self.assertEqual(index['walk'], (4, ('WANIPC2 §2.5.17',)))
+            self.assertEqual(index['SOAP'], (2, ()))
             suite = SimpleNamespace(DIR='x', CORPUS='cases.yaml')
             environment = {'GITHUB_SERVER_URL': 'https://github.com', 'GITHUB_REPOSITORY': 'o/r'}
             with unittest.mock.patch.object(compare, 'HERE', root / 'common'), \
@@ -191,9 +192,11 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(source('upnp/http', 'http')[1],
                              '[RFC9112 §2.2](https://www.rfc-editor.org/rfc/rfc9112#section-2.2)')
             self.assertEqual(source('upnp/old', 'old')[1], 'WANIPC1 §2.4')
+            self.assertEqual(source('upnp/both', 'both')[1], 'WANIPC1 §2.4.14, [WANIPC2 §2.5.14]'
+                             '(http://upnp.org/specs/gw/UPnP-gw-WANIPConnection-v2-Service.pdf)')
             self.assertEqual(compare.spec_cell('UDA-1.1 §2.1'), '[UDA-1.1 §2.1]'
                              '(https://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.1.pdf)')
-            self.assertEqual(source('upnp/gone', 'gone')[0], 'upnp/gone')
+            self.assertEqual(source('upnp/gone', 'gone'), ('upnp/gone', ''))
             with unittest.mock.patch.object(compare, 'HERE', root / 'common'), \
                  unittest.mock.patch.dict(os.environ, {}, clear=True):
                 self.assertEqual(compare.case_sources({'candidate': 'bbb'}, suite)('upnp/walk', 'walk')[0],
