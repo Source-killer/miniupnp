@@ -5,7 +5,9 @@ name: 'miniupnpd: Regression report'
 # (event COMMENT): the changed cases of each comparison and how to reproduce them, from the
 # review-* artifact of each comparison job (its review.md alone, not the logs). The
 # comparisons without a change share one line. A table of the totals comes first, the
-# boxes of each module and platform under "Show details". The earlier reports on the
+# boxes of each module and platform under "Show details". Colour follows ISA-101: normal
+# states stay gray or plain, red marks regressions down to their cases, amber an incomplete
+# comparison. The earlier reports on the
 # pull request are hidden as outdated.
 #
 # A separate workflow, as the run of a fork's pull request has a read-only token. This
@@ -121,11 +123,9 @@ jobs:
                           f'{"fails" if total[0] == 1 else "fail"} with this pull request.', '']
               if incomplete:
                   out += ['> [!WARNING]', f'> Incomplete comparisons: {", ".join(incomplete)}.', '']
-              if not total[0] and not incomplete:
-                  out += ['> [!NOTE]', f'> No regressions. {plural(total[1], "improvement", "improvements")}.', '']
               out += ['| | ' + ' | '.join(latex(colour, name) for colour, name in (
-                          (None, 'Improvements'), ('red', 'Regressions'), ('blue', 'New coverage'),
-                          ('blue', 'Other'), ('gray', 'Unchanged'))) + ' |',
+                          ('gray', 'Improvements'), ('red' if total[0] else 'gray', 'Regressions'), ('gray', 'New coverage'),
+                          ('gray', 'Other'), ('gray', 'Unchanged'))) + ' |',
                       '|:--|--:|--:|--:|--:|--:|',
                       f'| Cases | {total[1]} | {total[0]} | {total[2]} | {total[3]} | {total[4]} |', '']
               out += [f"Master's daemon against `{os.environ['HEAD_SHA'][:12]}`. Full tables, logs and "
